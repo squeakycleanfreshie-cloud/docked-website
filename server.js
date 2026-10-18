@@ -1,5 +1,7 @@
 const express = require("express");
 const session = require("express-session");
+const { Pool } = require("pg");
+const PgSession = require("connect-pg-simple")(session);
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -31,16 +33,28 @@ const {
 
 const MINH = Number(MIN_HOURS);
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 const PPH = Number(POINTS_PER_HOUR);
 const HACKATIME = "https://hackatime.hackclub.com";
 const WEEK_MS = 7 * 24 * 3600 * 1000;
 const START = new Date(CHALLENGE_START);
-if (isNaN(START)) throw new Error("CHALLENGE_START is not a valid date");
+
+if (isNaN(START)) {
+  throw new Error("CHALLENGE_START is not a valid date");
+}
 
 // ---------- static data ----------
 const JAMS = [
-  "One Button", "Tiny World", "Night Shift", "Out of Order", "Reverse",
-  "Only One Life", "No Words", "Gravity", "Chain Reaction", "Your Masterpiece",
+  "One Button",
+  "Tiny World",
+  "Night Shift",
+  "Out of Order",
+  "Reverse",
+  "Only One Life",
+  "No Words",
+  "Gravity",
+  "Chain Reaction",
+  "Your Masterpiece",
 ].map((theme, i) => ({ week: i + 1, theme }));
 
 const STORE = [
@@ -53,7 +67,7 @@ const STORE = [
   { id: "keyboard", name: "Mechanical keyboard", cost: 800 },
 ];
 
-// Based on the Horizons shipping guide
+// ---------- submission checklist ----------
 const CHECKLIST = [
   { key: "repo", text: "Code is in a public repo (GitHub, GitLab or similar)" },
   { key: "playable", text: "Game is playable at a public link (itch.io, GitHub Pages, Vercel, Netlify, Nest or a GitHub Release). Not localhost, a tunnel or Google Drive" },
@@ -68,32 +82,111 @@ const CHECKLIST = [
 ];
 
 // ---------- time helpers ----------
-const weekStart = (w) => new Date(START.getTime() + (w - 1) * WEEK_MS);
-const weekEnd = (w) => new Date(START.getTime() + w * WEEK_MS);
+const weekStart = (w) =>
+  new Date(START.getTime() + (w - 1) * WEEK_MS);
+
+const weekEnd = (w) =>
+  new Date(START.getTime() + w * WEEK_MS);
 
 function currentWeek(now = new Date()) {
   if (now < START) return 0;
+
   const w = Math.floor((now - START) / WEEK_MS) + 1;
+
   return w > JAMS.length ? JAMS.length + 1 : w;
 }
 
 const jamState = (w, now = new Date()) =>
-  now < weekStart(w) ? "upcoming" : now >= weekEnd(w) ? "closed" : "open";
+  now < weekStart(w)
+    ? "upcoming"
+    : now >= weekEnd(w)
+      ? "closed"
+      : "open";
 
-// ---------- tiny JSON "db" ----------
+// ---------- persistent PostgreSQL storage (Supabase) ----------
+// This keeps the app's existing in-memory data shape while PostgreSQL
+// becomes the durable source of truth.
 const DB_FILE = path.join(__dirname, "db.json");
-let db = { users: {}, submissions: [], orders: [] };
-try {
-  db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-} catch {}
 
-const save = () => fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL
+    ? { rejectUnauthorized: false }
+    : undefined,
+  max: 5,
+  connectionTimeoutMillis: 10000,
+});
+
+let db = { users: {}, submissions: [], orders: [] };
+let saveQueue = Promise.resolve();
+
+async function initDatabase() {
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL is required for persistent storage");
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS docked_app_state (
+      id smallint PRIMARY KEY CHECK (id = 1),
+      state jsonb NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  const result = await pool.query(
+    "SELECT state FROM docked_app_state WHERE id = 1"
+  );
+
+  if (result.rows.length) {
+    db = result.rows[0].state;
+  } else {
+    // Import existing db.json only if the database has no state yet.
+    try {
+      db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+    } catch {}
+
+    await pool.query(
+      `INSERT INTO docked_app_state (id, state)
+       VALUES (1, $1::jsonb)
+       ON CONFLICT (id) DO NOTHING`,
+      [JSON.stringify(db)]
+    );
+
+    const imported = await pool.query(
+      "SELECT state FROM docked_app_state WHERE id = 1"
+    );
+
+    if (imported.rows.length) {
+      db = imported.rows[0].state;
+    }
+  }
+
+  db.users ||= {};
+  db.submissions ||= [];
+  db.orders ||= [];
+
+  console.log("Docked database loaded from Supabase PostgreSQL");
+}
+
+function save() {
+  const snapshot = JSON.stringify(db);
+
+  saveQueue = saveQueue.catch(() => {}).then(async () => {
+    await pool.query(
+      `INSERT INTO docked_app_state (id, state, updated_at)
+       VALUES (1, $1::jsonb, now())
+       ON CONFLICT (id)
+       DO UPDATE SET state = EXCLUDED.state, updated_at = now()`,
+      [snapshot]
+    );
+  });
+
+  return saveQueue;
+}
+
 const isSubmitted = (s) => s.status !== "draft";
 
-// Coins are calculated dynamically from submitted entries.
-// Each whole hour above the 10-hour minimum earns one coin.
-const pointsFor = (seconds) =>
-  Math.max(0, Math.floor((Number(seconds) || 0) / 3600) - MINH);
+
 
 const earned = (u) =>
   db.submissions
@@ -110,10 +203,16 @@ const balance = (u) =>
 
 // ---------- app ----------
 const app = express();
+
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "4mb" }));
 
 app.use(session({
+  store: new PgSession({
+    pool,
+    tableName: "docked_sessions",
+    createTableIfMissing: true,
+  }),
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -125,7 +224,9 @@ app.use(session({
 }));
 
 const me = (req) => db.users[req.session.uid];
-const displayName = (u) => (u && (u.githubLogin || u.hcaName)) || "user";
+
+const displayName = (u) =>
+  (u && (u.githubLogin || u.hcaName)) || "user";
 
 const newUser = (f) => {
   const u = {
@@ -136,12 +237,15 @@ const newUser = (f) => {
     demoPoints: 0,
     ...f,
   };
+
   db.users[u.id] = u;
   return u;
 };
 
 const needLogin = (req, res, next) =>
-  me(req) ? next() : res.status(401).json({ error: "log in with GitHub first" });
+  me(req)
+    ? next()
+    : res.status(401).json({ error: "log in with GitHub first" });
 
 const form = (o) => new URLSearchParams(o).toString();
 
@@ -154,18 +258,24 @@ async function postForm(url, body) {
     },
     body: form(body),
   });
+
   return r.json();
 }
 
 // ---------- GitHub login ----------
 app.get("/auth/github", (req, res) => {
-  const state = (req.session.ghState = crypto.randomBytes(16).toString("hex"));
-  res.redirect("https://github.com/login/oauth/authorize?" + form({
-    client_id: GITHUB_CLIENT_ID,
-    redirect_uri: `${BASE_URL}/auth/github/callback`,
-    scope: "read:user",
-    state,
-  }));
+  const state = (req.session.ghState =
+    crypto.randomBytes(16).toString("hex"));
+
+  res.redirect(
+    "https://github.com/login/oauth/authorize?" +
+      form({
+        client_id: GITHUB_CLIENT_ID,
+        redirect_uri: `${BASE_URL}/auth/github/callback`,
+        scope: "read:user",
+        state,
+      })
+  );
 });
 
 app.get("/auth/github/callback", async (req, res) => {
@@ -176,29 +286,45 @@ app.get("/auth/github/callback", async (req, res) => {
 
     delete req.session.ghState;
 
-    const t = await postForm("https://github.com/login/oauth/access_token", {
-      client_id: GITHUB_CLIENT_ID,
-      client_secret: GITHUB_CLIENT_SECRET,
-      code: req.query.code,
-      redirect_uri: `${BASE_URL}/auth/github/callback`,
-    });
+    const t = await postForm(
+      "https://github.com/login/oauth/access_token",
+      {
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code: req.query.code,
+        redirect_uri: `${BASE_URL}/auth/github/callback`,
+      }
+    );
 
-    if (!t.access_token) return res.status(400).send("github token failed");
+    if (!t.access_token) {
+      return res.status(400).send("github token failed");
+    }
 
-    const gh = await (await fetch("https://api.github.com/user", {
+    const ghResponse = await fetch("https://api.github.com/user", {
       headers: {
         Authorization: `Bearer ${t.access_token}`,
         "User-Agent": "docked",
       },
-    })).json();
+    });
 
-    const existing = Object.values(db.users).find((u) => u.githubId === gh.id);
+    if (!ghResponse.ok) {
+      return res.status(400).send("github user lookup failed");
+    }
+
+    const gh = await ghResponse.json();
+    const existing = Object.values(db.users).find(
+      (u) => String(u.githubId) === String(gh.id)
+    );
+
     let user;
 
     if (me(req)) {
       if (existing && existing.id !== me(req).id) {
-        return res.status(409).send("that GitHub account is already linked to another user");
+        return res.status(409).send(
+          "that GitHub account is already linked to another user"
+        );
       }
+
       user = me(req);
       user.githubId = gh.id;
     } else {
@@ -206,7 +332,9 @@ app.get("/auth/github/callback", async (req, res) => {
     }
 
     user.githubLogin = gh.login;
-    save();
+
+    await save();
+
     req.session.uid = user.id;
     res.redirect("/app.html");
   } catch (e) {
@@ -214,7 +342,6 @@ app.get("/auth/github/callback", async (req, res) => {
     res.status(500).send("github login error");
   }
 });
-
 // ---------- Hackatime link ----------
 app.get("/auth/hackatime", needLogin, (req, res) => {
   const state = (req.session.htState = crypto.randomBytes(16).toString("hex"));
@@ -244,30 +371,39 @@ app.get("/auth/hackatime/callback", needLogin, async (req, res) => {
       redirect_uri: `${BASE_URL}/auth/hackatime/callback`,
     });
 
-    if (!t.access_token) return res.status(400).send("hackatime token failed");
+    if (!t.access_token) {
+      return res.status(400).send("hackatime token failed");
+    }
 
     const r = await fetch(`${HACKATIME}/api/v1/authenticated/me`, {
       headers: { Authorization: `Bearer ${t.access_token}` },
     });
 
-    if (!r.ok) return res.status(400).send("hackatime /me failed");
+    if (!r.ok) {
+      return res.status(400).send("hackatime /me failed");
+    }
 
     const data = await r.json();
     const hid = data.id && String(data.id);
 
-    if (!hid) return res.status(400).send("no hackatime id");
+    if (!hid) {
+      return res.status(400).send("no hackatime id");
+    }
 
     const taken = Object.values(db.users).find(
       (u) => u.hackatimeId === hid && u.id !== req.session.uid
     );
 
     if (taken) {
-      return res.status(409).send("that Hackatime account is already linked to another user");
+      return res.status(409).send(
+        "that Hackatime account is already linked to another user"
+      );
     }
 
     me(req).hackatimeId = hid;
     ensureStreak(me(req));
-    save();
+
+    await save();
     res.redirect("/app.html");
   } catch (e) {
     console.error(e);
@@ -275,14 +411,13 @@ app.get("/auth/hackatime/callback", needLogin, async (req, res) => {
   }
 });
 
-app.post("/api/hackatime/unlink", needLogin, (req, res) => {
+app.post("/api/hackatime/unlink", needLogin, async (req, res) => {
   me(req).hackatimeId = null;
-  save();
+  await save();
   res.json({ ok: true });
 });
 
 // ---------- Hackatime stats ----------
-// Returns { projects: { name: seconds }, banned } for [from, to].
 async function htStats(hid, from, to) {
   const params = {
     features: "projects",
@@ -290,12 +425,15 @@ async function htStats(hid, from, to) {
     end_date: to.toISOString(),
   };
 
-  const r = await fetch(`${HACKATIME}/api/v1/users/${hid}/stats?` + form(params), {
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent": "docked",
-    },
-  });
+  const r = await fetch(
+    `${HACKATIME}/api/v1/users/${hid}/stats?` + form(params),
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": "docked",
+      },
+    }
+  );
 
   if (!r.ok) throw new Error(`hackatime ${r.status}`);
 
@@ -317,37 +455,44 @@ const windowFor = (w) => [
   new Date(Math.min(Date.now(), weekEnd(w).getTime())),
 ];
 
+
+
 // ---------- weekly target, out mode, streak freezes ----------
 const GOAL = Number(GOAL_HOURS);
 const OUT_MULT = Number(OUT_MULTIPLIER);
 const SKIP = ["Other", "<<LAST_PROJECT>>"];
 const liveCache = new Map();
 
-// Only count projects the user has selected for that specific jam.
-// Drafts count toward progress; unselected projects never count.
 async function totalHours(u, w) {
   if (!u.hackatimeId) return 0;
 
-  const tracked = [...new Set(
-    db.submissions
-      .filter(
-        (s) =>
-          s.userId === u.id &&
-          s.week === w &&
-          s.project &&
-          !SKIP.includes(s.project)
-      )
-      .map((s) => s.project)
-  )];
+  const tracked = [
+    ...new Set(
+      db.submissions
+        .filter(
+          (s) =>
+            s.userId === u.id &&
+            s.week === w &&
+            s.project &&
+            !SKIP.includes(s.project)
+        )
+        .map((s) => s.project)
+    ),
+  ];
 
   if (!tracked.length) return 0;
 
-  const { projects } = await htStats(u.hackatimeId, ...windowFor(w));
+  const { projects } = await htStats(
+    u.hackatimeId,
+    ...windowFor(w)
+  );
 
-  return tracked.reduce(
-    (sum, name) => sum + (Number(projects[name]) || 0),
-    0
-  ) / 3600;
+  return (
+    tracked.reduce(
+      (sum, name) => sum + (Number(projects[name]) || 0),
+      0
+    ) / 3600
+  );
 }
 
 async function liveHours(u, fresh) {
@@ -357,16 +502,26 @@ async function liveHours(u, fresh) {
 
   const c = liveCache.get(u.id);
 
-  if (!fresh && c && c.week === w && Date.now() - c.t < 60000) {
+  if (
+    !fresh &&
+    c &&
+    c.week === w &&
+    Date.now() - c.t < 60000
+  ) {
     return c.hours;
   }
 
   const hours = await totalHours(u, w);
-  liveCache.set(u.id, { t: Date.now(), week: w, hours });
+
+  liveCache.set(u.id, {
+    t: Date.now(),
+    week: w,
+    hours,
+  });
+
   return hours;
 }
 
-// Streak tracking starts the week a user first links Hackatime.
 function ensureStreak(u) {
   if (!u.streak) {
     u.streak = {
@@ -388,13 +543,16 @@ function ensureStreak(u) {
   return u.streak;
 }
 
-// Settle one closed week. Freezes each add one hour toward the target.
 function applyWeek(u, w, hrs) {
   const st = ensureStreak(u);
   let used = 0;
 
   if (hrs < MINH) {
-    used = Math.min(u.freezes || 0, Math.ceil(MINH - hrs));
+    used = Math.min(
+      u.freezes || 0,
+      Math.ceil(MINH - hrs)
+    );
+
     u.freezes = (u.freezes || 0) - used;
   }
 
@@ -409,6 +567,7 @@ function applyWeek(u, w, hrs) {
     }
   } else {
     st.debt = +Math.max(0, st.debt - eff).toFixed(2);
+
     if (st.debt === 0) st.out = false;
   }
 
@@ -424,7 +583,10 @@ const settling = new Map();
 function settle(u) {
   const st = ensureStreak(u);
 
-  if (!st.started || !u.hackatimeId) return Promise.resolve();
+  if (!st.started || !u.hackatimeId) {
+    return Promise.resolve();
+  }
+
   if (settling.has(u.id)) return settling.get(u.id);
 
   const p = (async () => {
@@ -433,7 +595,7 @@ function settle(u) {
     for (let w = st.settled + 1; w <= last; w++) {
       applyWeek(u, w, await totalHours(u, w));
       st.settled = w;
-      save();
+      await save();
     }
   })().finally(() => settling.delete(u.id));
 
@@ -441,9 +603,9 @@ function settle(u) {
   return p;
 }
 
-// null if Hackatime isn't linked; ok=false if Hackatime couldn't be reached.
 async function streakInfo(u, fresh = false) {
   const st = ensureStreak(u);
+
   if (!st.started || !u.hackatimeId) return null;
 
   let ok = true;
@@ -463,8 +625,14 @@ async function streakInfo(u, fresh = false) {
     console.error("live", e.message);
   }
 
-  const remaining = st.out ? Math.max(0, st.debt - weekHours) : 0;
-  const settledHours = Object.values(st.weeks).reduce((a, x) => a + x.hours, 0);
+  const remaining = st.out
+    ? Math.max(0, st.debt - weekHours)
+    : 0;
+
+  const settledHours = Object.values(st.weeks).reduce(
+    (a, x) => a + x.hours,
+    0
+  );
 
   return {
     ok,
@@ -487,15 +655,21 @@ app.get("/api/status", (req, res) => {
     start: START.getTime(),
     week: w,
     phase: w === 0 ? "before" : w > JAMS.length ? "ended" : "open",
-    weekStart: w >= 1 && w <= JAMS.length ? weekStart(w).getTime() : null,
-    weekEnd: w >= 1 && w <= JAMS.length ? weekEnd(w).getTime() : null,
+    weekStart:
+      w >= 1 && w <= JAMS.length
+        ? weekStart(w).getTime()
+        : null,
+    weekEnd:
+      w >= 1 && w <= JAMS.length
+        ? weekEnd(w).getTime()
+        : null,
     checklist: CHECKLIST,
     pointsPerHour: PPH,
     minHours: MINH,
   });
 });
 
-// Projects with time logged in the current jam week.
+// ---------- Hackatime projects ----------
 app.get("/api/hackatime/projects", needLogin, async (req, res) => {
   const u = me(req);
   const w = currentWeek();
@@ -507,7 +681,11 @@ app.get("/api/hackatime/projects", needLogin, async (req, res) => {
   if (w < 1 || w > JAMS.length) return res.json([]);
 
   try {
-    const { projects } = await htStats(u.hackatimeId, ...windowFor(w));
+    const { projects } = await htStats(
+      u.hackatimeId,
+      ...windowFor(w)
+    );
+
     const used = db.submissions
       .filter((s) => s.userId === u.id && s.week !== w)
       .map((s) => s.project);
@@ -529,22 +707,26 @@ app.get("/api/hackatime/projects", needLogin, async (req, res) => {
 
 // ---------- jams ----------
 app.get("/api/jams", (req, res) => {
-  res.json(JAMS.map((j) => ({
-    ...j,
-    start: weekStart(j.week).getTime(),
-    end: weekEnd(j.week).getTime(),
-    state: jamState(j.week),
-    submissions: db.submissions
-      .filter((s) => s.week === j.week && isSubmitted(s))
-      .map((s) => ({
-        by: displayName(db.users[s.userId]),
-        title: s.title,
-        url: s.url,
-        repo: s.repo,
-        description: s.description,
-        screenshot: s.screenshot ? `/uploads/${s.screenshot}` : null,
-      })),
-  })));
+  res.json(
+    JAMS.map((j) => ({
+      ...j,
+      start: weekStart(j.week).getTime(),
+      end: weekEnd(j.week).getTime(),
+      state: jamState(j.week),
+      submissions: db.submissions
+        .filter((s) => s.week === j.week && isSubmitted(s))
+        .map((s) => ({
+          by: displayName(db.users[s.userId]),
+          title: s.title,
+          url: s.url,
+          repo: s.repo,
+          description: s.description,
+          screenshot: s.screenshot
+            ? `/uploads/${s.screenshot}`
+            : null,
+        })),
+    }))
+  );
 });
 
 const FORGES = [
@@ -560,35 +742,43 @@ function validRepo(u) {
   try {
     const x = new URL(u);
 
-    return /^https?:$/.test(x.protocol) &&
+    return (
+      /^https?:$/.test(x.protocol) &&
       FORGES.includes(x.hostname.replace(/^www\./, "")) &&
-      x.pathname.split("/").filter(Boolean).length >= 2;
+      x.pathname.split("/").filter(Boolean).length >= 2
+    );
   } catch {
     return false;
   }
 }
 
-// Data URL -> { buf, ext } after checking size and magic bytes.
 function parseImage(dataUrl) {
-  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || "");
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(
+    dataUrl || ""
+  );
+
   if (!m) return null;
 
   const buf = Buffer.from(m[2], "base64");
-  if (buf.length < 100 || buf.length > 3 * 1024 * 1024) return null;
 
-  const ok = m[1] === "png"
-    ? buf.slice(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
-    : m[1] === "jpeg"
-      ? buf.slice(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
-      : buf.slice(0, 4).toString() === "RIFF" &&
-        buf.slice(8, 12).toString() === "WEBP";
+  if (buf.length < 100 || buf.length > 3 * 1024 * 1024) {
+    return null;
+  }
 
-  return ok ? { buf, ext: m[1] === "jpeg" ? "jpg" : m[1] } : null;
+  const ok =
+    m[1] === "png"
+      ? buf.slice(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+      : m[1] === "jpeg"
+        ? buf.slice(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
+        : buf.slice(0, 4).toString() === "RIFF" &&
+          buf.slice(8, 12).toString() === "WEBP";
+
+  return ok
+    ? { buf, ext: m[1] === "jpeg" ? "jpg" : m[1] }
+    : null;
 }
-
-// ---------- save draft ----------
-// Drafts are private, count toward selected-project progress,
-// and earn no coins until successfully submitted.
+// Save a private draft. Drafts track the selected project's hours
+// but are not public and earn no points until submitted.
 app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
   const u = me(req);
   const week = Number(req.params.week);
@@ -609,29 +799,47 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
   const project = String(body.project || "").trim();
 
   if (!project) {
-    return res.status(400).json({ error: "pick a Hackatime project to track progress" });
+    return res.status(400).json({
+      error: "pick a Hackatime project to track progress",
+    });
   }
 
-  if (db.submissions.some(
-    (s) => s.userId === u.id && s.week !== week && s.project === project
-  )) {
-    return res.status(400).json({ error: "that Hackatime project is already used for another jam" });
+  if (
+    db.submissions.some(
+      (s) => s.userId === u.id && s.week !== week && s.project === project
+    )
+  ) {
+    return res.status(400).json({
+      error: "that Hackatime project is already used for another jam",
+    });
   }
 
-  const existing = db.submissions.find((s) => s.week === week && s.userId === u.id);
+  const existing = db.submissions.find(
+    (s) => s.week === week && s.userId === u.id
+  );
+
   const img = body.screenshot ? parseImage(body.screenshot) : null;
 
   if (body.screenshot && !img) {
-    return res.status(400).json({ error: "screenshot must be a png, jpg or webp under 3MB" });
+    return res.status(400).json({
+      error: "screenshot must be a png, jpg or webp under 3MB",
+    });
   }
 
   try {
-    const { projects, banned } = await htStats(u.hackatimeId, ...windowFor(week));
+    const { projects, banned } = await htStats(
+      u.hackatimeId,
+      ...windowFor(week)
+    );
 
-    if (banned) return res.status(403).json({ error: "account flagged by Hackatime" });
+    if (banned) {
+      return res.status(403).json({ error: "account flagged by Hackatime" });
+    }
 
     if (!(project in projects)) {
-      return res.status(400).json({ error: "no time logged on that project this week yet" });
+      return res.status(400).json({
+        error: "no time logged on that project this week yet",
+      });
     }
 
     let sub = existing;
@@ -643,6 +851,7 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
 
     if (img) {
       const name = `${crypto.randomUUID()}.${img.ext}`;
+
       fs.writeFileSync(path.join(UPLOAD_DIR, name), img.buf);
 
       if (sub.screenshot) {
@@ -665,7 +874,7 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
       updatedAt: new Date().toISOString(),
     });
 
-    save();
+    await save();
     liveCache.delete(u.id);
 
     res.json({
@@ -680,8 +889,7 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
   }
 });
 
-// ---------- submit/update ----------
-// Final submission still requires the checklist, screenshot, and 10+ hours.
+// Submit/update: only during that jam's week.
 app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   const u = me(req);
   const week = Number(req.params.week);
@@ -691,7 +899,9 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   }
 
   if (jamState(week) !== "open") {
-    return res.status(403).json({ error: "this jam is not open for submissions" });
+    return res.status(403).json({
+      error: "this jam is not open for submissions",
+    });
   }
 
   if (!u.hackatimeId) {
@@ -710,7 +920,16 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
     });
   }
 
-  const { title, description, url, repo, project, checklist, screenshot } = req.body || {};
+  const {
+    title,
+    description,
+    url,
+    repo,
+    project,
+    checklist,
+    screenshot,
+  } = req.body || {};
+
   const desc = String(description || "").trim();
 
   if (!title || !String(title).trim()) {
@@ -718,15 +937,21 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   }
 
   if (desc.length < 30) {
-    return res.status(400).json({ error: "description must be at least 30 characters" });
+    return res.status(400).json({
+      error: "description must be at least 30 characters",
+    });
   }
 
   if (desc.length > 1000) {
-    return res.status(400).json({ error: "description is over 1000 characters" });
+    return res.status(400).json({
+      error: "description is over 1000 characters",
+    });
   }
 
   if (!/^https?:\/\/\S+$/.test(url || "")) {
-    return res.status(400).json({ error: "playable link must be an http(s) url" });
+    return res.status(400).json({
+      error: "playable link must be an http(s) url",
+    });
   }
 
   if (!validRepo(repo)) {
@@ -743,20 +968,31 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   const missing = CHECKLIST.filter((c) => !done.includes(c.key));
 
   if (missing.length) {
-    return res.status(400).json({ error: `finish the checklist (${missing.length} left)` });
+    return res.status(400).json({
+      error: `finish the checklist (${missing.length} left)`,
+    });
   }
 
-  if (db.submissions.some(
-    (s) => s.userId === u.id && s.week !== week && s.project === project
-  )) {
-    return res.status(400).json({ error: "that Hackatime project is already used for another jam" });
+  if (
+    db.submissions.some(
+      (s) => s.userId === u.id && s.week !== week && s.project === project
+    )
+  ) {
+    return res.status(400).json({
+      error: "that Hackatime project is already used for another jam",
+    });
   }
 
-  let sub = db.submissions.find((s) => s.week === week && s.userId === u.id);
+  let sub = db.submissions.find(
+    (s) => s.week === week && s.userId === u.id
+  );
+
   const img = screenshot ? parseImage(screenshot) : null;
 
   if (screenshot && !img) {
-    return res.status(400).json({ error: "screenshot must be a png, jpg or webp under 3MB" });
+    return res.status(400).json({
+      error: "screenshot must be a png, jpg or webp under 3MB",
+    });
   }
 
   if (!img && !sub?.screenshot) {
@@ -764,12 +1000,19 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   }
 
   try {
-    const { projects, banned } = await htStats(u.hackatimeId, ...windowFor(week));
+    const { projects, banned } = await htStats(
+      u.hackatimeId,
+      ...windowFor(week)
+    );
 
-    if (banned) return res.status(403).json({ error: "account flagged by Hackatime" });
+    if (banned) {
+      return res.status(403).json({ error: "account flagged by Hackatime" });
+    }
 
     if (!(project in projects)) {
-      return res.status(400).json({ error: "no time logged on that project this week" });
+      return res.status(400).json({
+        error: "no time logged on that project this week",
+      });
     }
 
     const seconds = Number(projects[project]) || 0;
@@ -787,6 +1030,7 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
 
     if (img) {
       const name = `${crypto.randomUUID()}.${img.ext}`;
+
       fs.writeFileSync(path.join(UPLOAD_DIR, name), img.buf);
 
       if (sub.screenshot) {
@@ -811,7 +1055,7 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
 
     sub.points = pointsFor(sub.seconds);
 
-    save();
+    await save();
     liveCache.delete(u.id);
 
     res.json({
@@ -826,7 +1070,7 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   }
 });
 
-// ---------- resync selected projects ----------
+// Re-pull hours for all my submissions.
 app.post("/api/sync", needLogin, async (req, res) => {
   const u = me(req);
 
@@ -838,9 +1082,16 @@ app.post("/api/sync", needLogin, async (req, res) => {
     for (const sub of db.submissions.filter((s) => s.userId === u.id)) {
       if (jamState(sub.week) === "upcoming") continue;
 
-      const { projects, banned } = await htStats(u.hackatimeId, ...windowFor(sub.week));
+      const { projects, banned } = await htStats(
+        u.hackatimeId,
+        ...windowFor(sub.week)
+      );
 
-      if (banned) return res.status(403).json({ error: "account flagged by Hackatime" });
+      if (banned) {
+        return res.status(403).json({
+          error: "account flagged by Hackatime",
+        });
+      }
 
       if (sub.project in projects) {
         sub.seconds = Number(projects[sub.project]) || 0;
@@ -848,8 +1099,9 @@ app.post("/api/sync", needLogin, async (req, res) => {
       }
     }
 
-    save();
+    await save();
     liveCache.delete(u.id);
+
     res.json({ points: balance(u) });
   } catch (e) {
     console.error(e);
@@ -857,8 +1109,8 @@ app.post("/api/sync", needLogin, async (req, res) => {
   }
 });
 
-// ---------- demo only: fake extra hours ----------
-app.post("/api/demo/log-hours", needLogin, (req, res) => {
+// Demo only: fake extra hours.
+app.post("/api/demo/log-hours", needLogin, async (req, res) => {
   if (DEMO_MODE !== "true") {
     return res.status(403).json({ error: "demo mode off" });
   }
@@ -869,8 +1121,11 @@ app.post("/api/demo/log-hours", needLogin, (req, res) => {
     return res.status(400).json({ error: "hours 0-24" });
   }
 
-  me(req).demoPoints = (me(req).demoPoints || 0) + pointsFor(h * 3600);
-  save();
+  me(req).demoPoints =
+    (me(req).demoPoints || 0) + pointsFor(h * 3600);
+
+  await save();
+
   res.json({ points: balance(me(req)) });
 });
 
@@ -880,7 +1135,9 @@ app.get("/api/store", (req, res) => res.json(STORE));
 app.post("/api/store/redeem", needLogin, async (req, res) => {
   const item = STORE.find((i) => i.id === req.body?.itemId);
 
-  if (!item) return res.status(404).json({ error: "no such item" });
+  if (!item) {
+    return res.status(404).json({ error: "no such item" });
+  }
 
   const u = me(req);
 
@@ -909,9 +1166,14 @@ app.post("/api/store/redeem", needLogin, async (req, res) => {
 
     u.spentPoints = (u.spentPoints || 0) + cost;
     u.freezes = (u.freezes || 0) + qty;
-    save();
 
-    return res.json({ ok: true, points: balance(u), freezes: u.freezes });
+    await save();
+
+    return res.json({
+      ok: true,
+      points: balance(u),
+      freezes: u.freezes,
+    });
   }
 
   const info = await streakInfo(u, true);
@@ -931,6 +1193,7 @@ app.post("/api/store/redeem", needLogin, async (req, res) => {
   }
 
   u.spentPoints = (u.spentPoints || 0) + item.cost;
+
   db.orders.push({
     userId: u.id,
     itemId: item.id,
@@ -938,13 +1201,15 @@ app.post("/api/store/redeem", needLogin, async (req, res) => {
     at: new Date().toISOString(),
   });
 
-  save();
+  await save();
+
   res.json({ ok: true, points: balance(u) });
 });
 
 // ---------- current user ----------
 app.get("/api/me", async (req, res) => {
   const u = me(req);
+
   if (!u) return res.json(null);
 
   const streak = await streakInfo(u);
@@ -969,8 +1234,7 @@ app.get("/api/me", async (req, res) => {
         project: s.project,
         checklist: s.checklist,
         hours: +((s.seconds || 0) / 3600).toFixed(2),
-        points: isSubmitted(s) ? pointsFor(s.seconds || 0) : 0,
-        status: s.status || "submitted",
+        points: s.points || 0,
       })),
 
     orders: db.orders.filter((o) => o.userId === u.id),
@@ -982,10 +1246,31 @@ app.post("/auth/logout", (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
-app.use("/uploads", express.static(UPLOAD_DIR, {
-  setHeaders: (r) => r.set("X-Content-Type-Options", "nosniff"),
-}));
+app.use(
+  "/uploads",
+  express.static(UPLOAD_DIR, {
+    setHeaders: (r) => r.set("X-Content-Type-Options", "nosniff"),
+  })
+);
 
 app.use(express.static(path.join(__dirname, "public")));
 
-app.listen(PORT, () => console.log(`Docked on ${BASE_URL}`));
+initDatabase()
+  .then(() => {
+    app.listen(PORT, () => console.log(`Docked on ${BASE_URL}`));
+  })
+  .catch((err) => {
+    console.error("Docked database startup failed:", err);
+    process.exit(1);
+  });
+
+process.on("SIGTERM", async () => {
+  try {
+    await saveQueue;
+  } catch (e) {
+    console.error("final database save failed", e);
+  }
+
+  await pool.end();
+  process.exit(0);
+});
