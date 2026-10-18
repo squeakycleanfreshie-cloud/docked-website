@@ -12,8 +12,9 @@
   a { color: #c0272d; }
   section { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px; margin: 0 0 12px; }
   section.locked { color: #777; background: #fafafa; }
-  button { font: inherit; padding: 4px 12px; border: 1px solid #1a1a1a; background: #fff; border-radius: 3px; cursor: pointer; }
+  button { font: inherit; padding: 6px 12px; border: 1px solid #1a1a1a; background: #fff; border-radius: 3px; cursor: pointer; }
   button.primary { background: #c0272d; border-color: #c0272d; color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
   input, select { font: inherit; padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px; box-sizing: border-box; }
   label.f { display: block; margin: 10px 0 2px; font-size: 14px; color: #555; }
   input.w, select.w { width: 100%; }
@@ -34,9 +35,13 @@
   [hidden] { display: none !important; }
   textarea { font: inherit; padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px; box-sizing: border-box; width: 100%; min-height: 90px; resize: vertical; }
   .thumb { max-width: 240px; max-height: 160px; display: block; margin: 6px 0; border: 1px solid #ddd; }
+  .draft-note { background: #f7f7f7; padding: 10px 12px; border-radius: 4px; font-size: 14px; margin: 12px 0; }
+  .draft-status { font-size: 13px; padding: 2px 7px; border: 1px solid #bbb; border-radius: 3px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
 </style>
 </head>
 <body>
+
 <h1>Docked</h1>
 <div class="bar">
   <span id="weekLabel" class="muted"></span>
@@ -64,196 +69,571 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const safeUrl = (u) => (/^https?:\/\//.test(u) ? esc(u) : "#");
-const fmtDate = (t) => new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;"
+}[c]));
+
+const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? esc(u) : "#");
+
+const fmtDate = (t) => new Date(t).toLocaleString([], {
+  dateStyle: "medium",
+  timeStyle: "short"
+});
 
 async function api(path, method = "GET", body) {
-  const r = await fetch(path, { method, headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined
+  });
+
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { alert(j.error || r.status); throw new Error(j.error || r.status); }
+
+  if (!r.ok) {
+    alert(j.error || r.status);
+    throw new Error(j.error || r.status);
+  }
+
   return j;
 }
 
-let ME = null, STATUS = null, JAMS = [], PROJECTS = [], offset = 0, SHOT = null;
+let ME = null;
+let STATUS = null;
+let JAMS = [];
+let PROJECTS = [];
+let offset = 0;
+let SHOT = null;
+let ITEMS = [];
 
 // ---------- countdown ----------
 function tick() {
   if (!STATUS) return;
+
   const now = Date.now() + offset;
-  let target = null, label = "";
-  if (STATUS.phase === "before") { target = STATUS.start; label = "Starts in "; }
-  else if (STATUS.phase === "open") { target = STATUS.weekEnd; label = "Week ends in "; }
-  if (!target) { $("countdown").textContent = "Challenge over"; return; }
+  let target = null;
+  let label = "";
+
+  if (STATUS.phase === "before") {
+    target = STATUS.start;
+    label = "Starts in ";
+  } else if (STATUS.phase === "open") {
+    target = STATUS.weekEnd;
+    label = "Week ends in ";
+  }
+
+  if (!target) {
+    $("countdown").textContent = "Challenge over";
+    return;
+  }
+
   let s = Math.max(0, Math.floor((target - now) / 1000));
-  const d = Math.floor(s / 86400); s %= 86400;
-  const h = Math.floor(s / 3600); s %= 3600;
-  const m = Math.floor(s / 60); s %= 60;
-  $("countdown").textContent = `${label}${d}d ${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
-  if (target - now <= 0) setTimeout(init, 1500); // roll over to the next week
+  const d = Math.floor(s / 86400);
+  s %= 86400;
+
+  const h = Math.floor(s / 3600);
+  s %= 3600;
+
+  const m = Math.floor(s / 60);
+  s %= 60;
+
+  $("countdown").textContent =
+    `${label}${d}d ${String(h).padStart(2, "0")}h ` +
+    `${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
+
+  if (target - now <= 0) setTimeout(init, 1500);
 }
+
 setInterval(tick, 1000);
 
 // ---------- account ----------
 function renderAccount() {
-  if (!ME) { $("account").innerHTML = '<a href="/auth/github"><button class="primary">Log in with GitHub</button></a>'; return; }
+  if (!ME) {
+    $("account").innerHTML =
+      '<a href="/auth/github"><button class="primary">Log in with GitHub</button></a>';
+    return;
+  }
+
+  const draftCount = (ME.submissions || []).filter(
+    (s) => s.status === "draft"
+  ).length;
+
   $("account").innerHTML = `
     <table>
-      <tr><td>Signed in as</td><td>${esc(ME.name)} <button onclick="logout()">Log out</button></td></tr>
-      <tr><td>Hackatime</td><td>${ME.hackatimeLinked
-        ? 'Linked <button onclick="sync()">Sync hours</button> <button onclick="unlink()">Unlink</button>'
-        : '<a href="/auth/hackatime">Connect Hackatime</a>'}</td></tr>
-      <tr><td>Switch 2</td><td><progress value="${Math.min(ME.hours, ME.goalHours)}" max="${ME.goalHours}"></progress> ${ME.hours} / ${ME.goalHours} hours</td></tr>
+      <tr>
+        <td>Signed in as</td>
+        <td>${esc(ME.name)} <button onclick="logout()">Log out</button></td>
+      </tr>
+      <tr>
+        <td>Hackatime</td>
+        <td>${ME.hackatimeLinked
+          ? 'Linked <button onclick="sync()">Sync hours</button> <button onclick="unlink()">Unlink</button>'
+          : '<a href="/auth/hackatime">Connect Hackatime</a>'}
+        </td>
+      </tr>
+      <tr>
+        <td>Switch 2</td>
+        <td>
+          <progress value="${Math.min(ME.hours || 0, ME.goalHours || 500)}"
+            max="${ME.goalHours || 500}"></progress>
+          ${ME.hours || 0} / ${ME.goalHours || 500} hours
+        </td>
+      </tr>
       ${ME.streak ? `
-      <tr><td>This week</td><td><progress value="${Math.min(ME.streak.weekHours, ME.streak.weekTarget)}" max="${ME.streak.weekTarget}"></progress> ${ME.streak.weekHours} / ${ME.streak.weekTarget} hours</td></tr>
-      <tr><td>Status</td><td>${ME.streak.out ? `<b>Out</b>: log ${ME.streak.remaining} more hours to get back in` : "In"}</td></tr>
-      <tr><td>Streak freezes</td><td>${ME.streak.freezes}</td></tr>` : ""}
-      <tr><td><b>Points</b></td><td><b>${ME.points}</b></td></tr>
-      <tr><td>Orders</td><td>${ME.orders.map((o) => esc(o.itemId)).join(", ") || "None"}</td></tr>
+        <tr>
+          <td>This week</td>
+          <td>
+            <progress value="${Math.min(ME.streak.weekHours, ME.streak.weekTarget)}"
+              max="${ME.streak.weekTarget}"></progress>
+            ${ME.streak.weekHours} / ${ME.streak.weekTarget} hours
+          </td>
+        </tr>
+        <tr>
+          <td>Status</td>
+          <td>${ME.streak.out
+            ? `<b>Out</b>: log ${ME.streak.remaining} more hours to get back in`
+            : "In"}
+          </td>
+        </tr>
+        <tr>
+          <td>Streak freezes</td>
+          <td>${ME.streak.freezes}</td>
+        </tr>
+      ` : ""}
+      <tr>
+        <td><b>Coins</b></td>
+        <td><b>${ME.points}</b></td>
+      </tr>
+      <tr>
+        <td>Saved drafts</td>
+        <td>${draftCount}</td>
+      </tr>
+      <tr>
+        <td>Orders</td>
+        <td>${(ME.orders || []).map((o) => esc(o.itemId)).join(", ") || "None"}</td>
+      </tr>
     </table>
-    ${ME.demoMode ? '<p class="muted">Demo: <input id="dh" type="number" value="1" style="width:70px"> hours <button onclick="demoLog()">Log</button></p>' : ""}`;
+    ${ME.demoMode
+      ? '<p class="muted">Demo: <input id="dh" type="number" value="1" style="width:70px"> hours <button onclick="demoLog()">Log</button></p>'
+      : ""}
+  `;
 }
-async function logout() { await api("/auth/logout", "POST"); location.reload(); }
-async function unlink() { await api("/api/hackatime/unlink", "POST"); init(); }
-async function sync() { await api("/api/sync", "POST"); init(); }
-async function demoLog() { await api("/api/demo/log-hours", "POST", { hours: Number($("dh").value) }); init(); }
 
-// ---------- jams ----------
+async function logout() {
+  await api("/auth/logout", "POST");
+  location.reload();
+}
+
+async function unlink() {
+  await api("/api/hackatime/unlink", "POST");
+  await init();
+}
+
+async function sync() {
+  await api("/api/sync", "POST");
+  await init();
+}
+
+async function demoLog() {
+  await api("/api/demo/log-hours", "POST", {
+    hours: Number($("dh").value)
+  });
+  await init();
+}
+
+// ---------- jam form ----------
 function jamForm(j, mine) {
-  if (!ME) return '<p class="muted">Log in to submit.</p>';
-  if (!ME.hackatimeLinked) return '<p class="muted">Connect Hackatime to submit.</p>';
-  if (ME.streak?.out) return `<p>You're out. Log ${ME.streak.remaining} more hours to get back in, then you can submit.</p>`;
+  if (!ME) {
+    return '<p class="muted">Log in to save a draft or submit.</p>';
+  }
+
+  if (!ME.hackatimeLinked) {
+    return '<p class="muted">Connect Hackatime to track project hours.</p>';
+  }
+
+  // Do not block draft saving when the user is marked "out".
+  // The server still enforces its rules when a final submission is attempted.
+
   const names = PROJECTS.map((p) => p.name);
-  if (mine?.project && !names.includes(mine.project)) names.unshift(mine.project);
+
+  if (mine?.project && !names.includes(mine.project)) {
+    names.unshift(mine.project);
+  }
+
   const opts = PROJECTS.length || mine
     ? names.map((n) => {
         const p = PROJECTS.find((x) => x.name === n);
-        return `<option value="${esc(n)}" ${mine?.project === n ? "selected" : ""}>${esc(n)}${p ? ` (${p.hours}h this week)` : ""}</option>`;
+
+        return `<option value="${esc(n)}"
+          ${mine?.project === n ? "selected" : ""}>
+          ${esc(n)}${p ? ` (${p.hours}h this week)` : ""}
+        </option>`;
       }).join("")
     : "";
+
   const checked = mine?.checklist || [];
+  const isDraft = mine?.status === "draft";
+
   return `
+    ${isDraft ? `
+      <div class="draft-note">
+        <b>Private draft</b><br>
+        Your draft is only visible to you. Hours from the selected
+        Hackatime project count toward progress, but drafts earn no coins
+        until you successfully submit them.
+      </div>
+    ` : ""}
+
     <label class="f">Game title</label>
     <input class="w" id="title" value="${esc(mine?.title)}">
-    <label class="f">Description (30 to 1000 characters)</label>
+
+    <label class="f">Description (30 to 1000 characters for final submission)</label>
     <textarea id="description">${esc(mine?.description)}</textarea>
+
     <label class="f">Playable link</label>
-    <input class="w" id="url" placeholder="https://" value="${esc(mine?.url)}">
+    <input class="w" id="url" placeholder="https://"
+      value="${esc(mine?.url)}">
+
     <label class="f">Code link (GitHub, GitLab or similar)</label>
-    <input class="w" id="repo" placeholder="https://github.com/you/your-game" value="${esc(mine?.repo)}">
-    <label class="f">Screenshot (png, jpg or webp)${mine?.screenshot ? " - leave empty to keep the current one" : ""}</label>
-    <input type="file" id="shot" accept="image/png,image/jpeg,image/webp" onchange="pickShot(this)">
-    <img id="shotPreview" class="thumb" ${mine?.screenshot ? `src="${esc(mine.screenshot)}"` : 'style="display:none"'} alt="">
+    <input class="w" id="repo"
+      placeholder="https://github.com/you/your-game"
+      value="${esc(mine?.repo)}">
+
+    <label class="f">
+      Screenshot (png, jpg or webp)
+      ${mine?.screenshot ? " - leave empty to keep the current one" : ""}
+    </label>
+    <input type="file" id="shot"
+      accept="image/png,image/jpeg,image/webp"
+      onchange="pickShot(this)">
+
+    <img id="shotPreview" class="thumb"
+      ${mine?.screenshot
+        ? `src="${esc(mine.screenshot)}"`
+        : 'style="display:none"'}
+      alt="Screenshot preview">
+
     <label class="f">Hackatime project</label>
-    <select class="w" id="project"><option value="">Select a project</option>${opts}</select>
-    <div class="muted">Needs at least ${STATUS.minHours} hours on the project this week.</div>
-    ${PROJECTS.length || mine ? "" : '<div class="muted">No Hackatime projects with time logged this week yet.</div>'}
-    <label class="f">Checklist (all required)</label>
+    <select class="w" id="project">
+      <option value="">Select a project</option>
+      ${opts}
+    </select>
+
+    <div class="muted">
+      Select only the Hackatime project you want this jam to track.
+      Only hours from this selected project count toward this jam.
+      A final submission requires at least ${STATUS.minHours} hours.
+    </div>
+
+    ${PROJECTS.length || mine
+      ? ""
+      : '<div class="muted">No Hackatime projects with time logged this week yet. Start coding and refresh.</div>'}
+
+    <label class="f">Checklist (all required for final submission)</label>
+
     ${STATUS.checklist.map((c) => `
-      <label class="check"><input type="checkbox" class="ck" value="${esc(c.key)}" ${checked.includes(c.key) ? "checked" : ""}>
-      <span>${esc(c.text)}</span></label>`).join("")}
-    <p><button class="primary" onclick="submitJam(${j.week})">${mine ? "Update submission" : "Submit"}</button></p>`;
+      <label class="check">
+        <input type="checkbox" class="ck" value="${esc(c.key)}"
+          ${checked.includes(c.key) ? "checked" : ""}>
+        <span>${esc(c.text)}</span>
+      </label>
+    `).join("")}
+
+    <div class="actions">
+      <button onclick="saveDraft(${j.week})">Save draft</button>
+      <button class="primary" onclick="submitJam(${j.week})">
+        ${isDraft ? "Submit draft" : mine ? "Update submission" : "Submit"}
+      </button>
+    </div>
+
+    <p class="muted">
+      Save a draft at any time. To publish your entry and earn coins,
+      complete the checklist, upload a screenshot, and reach the required hours.
+    </p>
+  `;
 }
 
+// ---------- render jams ----------
 function renderJams() {
   const current = JAMS.filter((j) => j.state === "open");
+
   if (!current.length) {
-    $("jams").innerHTML = `<p class="muted">${STATUS.phase === "before"
-      ? "The first jam starts " + fmtDate(STATUS.start) + "."
-      : "All jams are finished."}</p>`;
+    $("jams").innerHTML = `<p class="muted">${
+      STATUS.phase === "before"
+        ? "The first jam starts " + fmtDate(STATUS.start) + "."
+        : "All jams are finished."
+    }</p>`;
     return;
   }
+
   $("jams").innerHTML = current.map((j) => {
-    const mine = ME?.submissions.find((s) => s.week === j.week);
+    const mine = ME?.submissions?.find((s) => s.week === j.week);
     const open = j.state === "open";
+    const isDraft = mine?.status === "draft";
     const tag = { open: "Open now", upcoming: "Not started", closed: "Closed" }[j.state];
+
     return `
-    <section class="${open ? "" : "locked"}">
-      <div class="bar"><h3>Week ${j.week}: ${esc(j.theme)}</h3><span class="muted">${tag}</span></div>
-      <div class="muted">${fmtDate(j.start)} to ${fmtDate(j.end)}</div>
-      ${mine && !open ? `<p>Your submission: <a href="${safeUrl(mine.url)}">${esc(mine.title)}</a> · ${mine.hours}h · ${mine.points} pts</p>` : ""}
-      ${open ? jamForm(j, mine) : ""}
-      ${j.submissions.length ? `<ul>${j.submissions.map((s) =>
-        `<li>${esc(s.by)}: <a href="${safeUrl(s.url)}">${esc(s.title)}</a> (<a href="${safeUrl(s.repo)}">code</a>)
-          <div class="muted">${esc(s.description)}</div>
-          ${s.screenshot ? `<img class="thumb" src="${esc(s.screenshot)}" alt="">` : ""}</li>`).join("")}</ul>` : ""}
-    </section>`;
+      <section class="${open ? "" : "locked"}">
+        <div class="bar">
+          <h3>Week ${j.week}: ${esc(j.theme)}</h3>
+          <span class="muted">${tag}</span>
+        </div>
+
+        <div class="muted">
+          ${fmtDate(j.start)} to ${fmtDate(j.end)}
+        </div>
+
+        ${mine ? `
+          <div class="draft-note">
+            <b>${isDraft ? "Draft saved — private" : "Submission saved"}</b><br>
+            ${esc(mine.title || "Untitled project")}<br>
+            Selected project hours: ${mine.hours || 0}h<br>
+            ${isDraft
+              ? "Coins earned from this draft: 0. It is not published."
+              : `Coins earned for this entry: ${mine.points || 0}`}
+          </div>
+        ` : ""}
+
+        ${open ? jamForm(j, mine) : ""}
+
+        ${j.submissions?.length ? `
+          <h3>Published submissions</h3>
+          <ul>
+            ${j.submissions.map((s) => `
+              <li>
+                ${esc(s.by)}:
+                <a href="${safeUrl(s.url)}" target="_blank" rel="noopener noreferrer">
+                  ${esc(s.title)}
+                </a>
+                (<a href="${safeUrl(s.repo)}" target="_blank" rel="noopener noreferrer">code</a>)
+                <div class="muted">${esc(s.description)}</div>
+                ${s.screenshot
+                  ? `<img class="thumb" src="${esc(s.screenshot)}" alt="Submission screenshot">`
+                  : ""}
+              </li>
+            `).join("")}
+          </ul>
+        ` : ""}
+      </section>
+    `;
   }).join("");
 }
 
+// ---------- screenshot upload ----------
 function pickShot(input) {
   const f = input.files[0];
   SHOT = null;
+
   if (!f) return;
-  if (!/^image\/(png|jpeg|webp)$/.test(f.type)) { alert("Use a png, jpg or webp"); input.value = ""; return; }
+
+  if (!/^image\/(png|jpeg|webp)$/.test(f.type)) {
+    alert("Use a PNG, JPG or WebP image.");
+    input.value = "";
+    return;
+  }
+
   const img = new Image();
+
   img.onload = () => {
     const scale = Math.min(1, 1600 / img.width);
     const c = document.createElement("canvas");
-    c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+
+    c.width = Math.round(img.width * scale);
+    c.height = Math.round(img.height * scale);
+
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+
+    // Send a compact JPEG data URL to the server.
     SHOT = c.toDataURL("image/jpeg", 0.85);
-    const pv = $("shotPreview"); pv.src = SHOT; pv.style.display = "block";
+
+    const pv = $("shotPreview");
+    pv.src = SHOT;
+    pv.style.display = "block";
+
+    URL.revokeObjectURL(img.src);
   };
-  img.onerror = () => alert("Could not read that image");
+
+  img.onerror = () => {
+    alert("Could not read that image.");
+    URL.revokeObjectURL(img.src);
+  };
+
   img.src = URL.createObjectURL(f);
 }
 
+// ---------- form payload ----------
+function getJamFormData() {
+  const checklist = [...document.querySelectorAll(".ck:checked")]
+    .map((c) => c.value);
+
+  return {
+    title: $("title").value,
+    description: $("description").value,
+    url: $("url").value,
+    repo: $("repo").value,
+    project: $("project").value,
+    checklist,
+    screenshot: SHOT
+  };
+}
+
+// ---------- save draft ----------
+async function saveDraft(week) {
+  try {
+    const body = getJamFormData();
+
+    const r = await api(`/api/jams/${week}/draft`, "POST", body);
+
+    SHOT = null;
+
+    alert(
+      `Draft saved privately.\n\n` +
+      `${r.hours} hours are recorded for your selected project.\n` +
+      `Drafts are not published and earn no coins until submitted.`
+    );
+
+    await init();
+  } catch (e) {
+    console.error("Could not save draft:", e);
+  }
+}
+
+// ---------- final submission ----------
 async function submitJam(week) {
-  const checklist = [...document.querySelectorAll(".ck:checked")].map((c) => c.value);
-  const r = await api(`/api/jams/${week}/submit`, "POST", {
-    title: $("title").value, description: $("description").value, url: $("url").value,
-    repo: $("repo").value, project: $("project").value, checklist, screenshot: SHOT });
-  SHOT = null;
-  alert(`Saved. ${r.hours}h counted so far.`);
-  init();
+  try {
+    const body = getJamFormData();
+
+    const r = await api(`/api/jams/${week}/submit`, "POST", body);
+
+    SHOT = null;
+
+    alert(
+      `Submission saved!\n\n` +
+      `${r.hours} hours counted.\n` +
+      `Your current coin balance is ${r.points}.`
+    );
+
+    await init();
+  } catch (e) {
+    console.error("Could not submit jam:", e);
+  }
 }
 
 // ---------- store ----------
-let ITEMS = [];
-async function loadStore() { ITEMS = await api("/api/store"); renderStore(); }
+async function loadStore() {
+  ITEMS = await api("/api/store");
+  renderStore();
+}
+
 function renderStore() {
   const out = ME?.streak?.out;
-  $("store").innerHTML = (out ? `<p>You're out, so items are locked until you log ${ME.streak.remaining} more hours. Streak freezes are still available.</p>` : "") +
-    `<table>${ITEMS.map((i) => i.kind === "freeze"
-      ? `<tr><td>${esc(i.name)}<div class="muted">${i.cost} pts each. A freeze adds 1 hour to a week you fall short, so you stay in or owe less.</div></td>
-         <td><input id="fq" type="number" min="1" max="50" value="1" style="width:60px"> <button onclick="buyFreeze()">Buy</button></td></tr>`
-      : `<tr><td>${esc(i.name)}</td><td>${i.cost} pts <button onclick="redeem('${esc(i.id)}')" ${out ? "disabled" : ""}>Redeem</button></td></tr>`).join("")}</table>`;
+
+  $("store").innerHTML =
+    (out
+      ? `<p>You're out, so items are locked until you log ${
+          ME.streak.remaining
+        } more hours. Streak freezes are still available.</p>`
+      : "") +
+    `<table>${
+      ITEMS.map((i) => i.kind === "freeze"
+        ? `<tr>
+            <td>
+              ${esc(i.name)}
+              <div class="muted">
+                ${i.cost} pts each. A freeze adds 1 hour to a week
+                you fall short, so you stay in or owe less.
+              </div>
+            </td>
+            <td>
+              <input id="fq" type="number" min="1" max="50"
+                value="1" style="width:60px">
+              <button onclick="buyFreeze()">Buy</button>
+            </td>
+          </tr>`
+        : `<tr>
+            <td>${esc(i.name)}</td>
+            <td>
+              ${i.cost} pts
+              <button onclick="redeem('${esc(i.id)}')" ${out ? "disabled" : ""}>
+                Redeem
+              </button>
+            </td>
+          </tr>`
+      ).join("")
+    }</table>`;
 }
-async function redeem(id) { await api("/api/store/redeem", "POST", { itemId: id }); init(); }
+
+async function redeem(id) {
+  await api("/api/store/redeem", "POST", { itemId: id });
+  await init();
+}
+
 async function buyFreeze() {
-  const r = await api("/api/store/redeem", "POST", { itemId: "freeze", qty: Number($("fq").value) || 1 });
+  const r = await api("/api/store/redeem", "POST", {
+    itemId: "freeze",
+    qty: Number($("fq").value) || 1
+  });
+
   alert(`You now have ${r.freezes} streak freeze${r.freezes === 1 ? "" : "s"}.`);
-  init();
+  await init();
 }
 
 // ---------- tabs ----------
 function showTab(name) {
   $("tab-jam").hidden = name !== "jam";
   $("tab-shop").hidden = name !== "shop";
+
   $("btn-jam").classList.toggle("active", name === "jam");
   $("btn-shop").classList.toggle("active", name === "shop");
+
   history.replaceState(null, "", "#" + name);
 }
 
 // ---------- init ----------
 async function init() {
-  STATUS = await api("/api/status");
-  offset = STATUS.now - Date.now();
-  $("weekLabel").textContent = STATUS.phase === "open" ? `Week ${STATUS.week} of 10`
-    : STATUS.phase === "before" ? "Not started" : "Finished";
-  ME = await api("/api/me");
-  PROJECTS = [];
-  if (ME?.hackatimeLinked && STATUS.phase === "open") {
-    try { PROJECTS = await api("/api/hackatime/projects"); } catch {}
+  try {
+    STATUS = await api("/api/status");
+    offset = STATUS.now - Date.now();
+
+    $("weekLabel").textContent =
+      STATUS.phase === "open"
+        ? `Week ${STATUS.week} of 10`
+        : STATUS.phase === "before"
+          ? "Not started"
+          : "Finished";
+
+    ME = await api("/api/me");
+
+    PROJECTS = [];
+
+    if (ME?.hackatimeLinked && STATUS.phase === "open") {
+      try {
+        PROJECTS = await api("/api/hackatime/projects");
+      } catch (e) {
+        console.error("Could not load Hackatime projects:", e);
+      }
+    }
+
+    JAMS = await api("/api/jams");
+
+    renderAccount();
+    renderJams();
+    renderStore();
+    tick();
+
+    $("shopPoints").textContent = ME ? `${ME.points} coins` : "Log in to see";
+  } catch (e) {
+    console.error("Could not load Docked:", e);
   }
-  JAMS = await api("/api/jams");
-  renderAccount(); renderJams(); renderStore(); tick();
-  $("shopPoints").textContent = ME ? ME.points + " pts" : "log in to see";
 }
+
 showTab(location.hash === "#shop" ? "shop" : "jam");
-init(); loadStore();
+init();
+loadStore();
 </script>
 </body>
 </html>
