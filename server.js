@@ -18,9 +18,6 @@ const {
   SESSION_SECRET = "dev-secret",
   GITHUB_CLIENT_ID,
   GITHUB_CLIENT_SECRET,
-  HCA_CLIENT_ID,
-  HCA_CLIENT_SECRET,
-  HCA_HOST = "https://auth.hackclub.com",
   HACKATIME_CLIENT_ID,
   HACKATIME_CLIENT_SECRET,
   CHALLENGE_START = "2026-10-26T00:00:00+11:00", // include a UTC offset
@@ -96,7 +93,7 @@ app.use(session({ secret: SESSION_SECRET, resave: false, saveUninitialized: fals
 
 const me = (req) => db.users[req.session.uid];
 const displayName = (u) => (u && (u.githubLogin || u.hcaName)) || "user";
-const newUser = (f) => { const u = { id: crypto.randomUUID(), githubId: null, hcaId: null, hackatimeId: null, spentPoints: 0, demoPoints: 0, ...f }; db.users[u.id] = u; return u; };
+const newUser = (f) => { const u = { id: crypto.randomUUID(), githubId: null, hackatimeId: null, spentPoints: 0, demoPoints: 0, ...f }; db.users[u.id] = u; return u; };
 const needLogin = (req, res, next) => (me(req) ? next() : res.status(401).json({ error: "log in with GitHub first" }));
 
 const form = (o) => new URLSearchParams(o).toString();
@@ -136,44 +133,6 @@ app.get("/auth/github/callback", async (req, res) => {
     req.session.uid = user.id;
     res.redirect("/app.html");
   } catch (e) { console.error(e); res.status(500).send("github login error"); }
-});
-
-// ---------- Hack Club Auth login ----------
-app.get("/auth/hackclub", (req, res) => {
-  const state = (req.session.hcaState = crypto.randomBytes(16).toString("hex"));
-  res.redirect(`${HCA_HOST}/oauth/authorize?` + form({
-    client_id: HCA_CLIENT_ID, redirect_uri: `${BASE_URL}/auth/hackclub/callback`,
-    response_type: "code", scope: "openid profile", state }));
-});
-
-app.get("/auth/hackclub/callback", async (req, res) => {
-  try {
-    if (!req.query.state || req.query.state !== req.session.hcaState) return res.status(400).send("bad state");
-    delete req.session.hcaState;
-    const t = await postForm(`${HCA_HOST}/oauth/token`, {
-      client_id: HCA_CLIENT_ID, client_secret: HCA_CLIENT_SECRET, code: req.query.code,
-      grant_type: "authorization_code", redirect_uri: `${BASE_URL}/auth/hackclub/callback` });
-    if (!t.access_token) return res.status(400).send("hack club auth token failed");
-    const r = await fetch(`${HCA_HOST}/oauth/userinfo`, { headers: { Authorization: `Bearer ${t.access_token}` } });
-    if (!r.ok) return res.status(400).send("hack club auth userinfo failed");
-    const info = await r.json();
-    const hid = String(info.sub || info.id || "");
-    if (!hid) return res.status(400).send("no hack club id");
-    // public display name: first name + last initial
-    const first = String(info.given_name || (info.name || "").split(" ")[0] || "").trim();
-    const last = String(info.family_name || (info.name || "").split(" ").slice(1).join(" ") || "").trim();
-    const name = (first + (last ? " " + last[0] + "." : "")).trim() || "Hack Clubber";
-    const existing = Object.values(db.users).find((u) => u.hcaId === hid);
-    let user;
-    if (me(req)) { // already logged in: link Hack Club to this account
-      if (existing && existing.id !== me(req).id) return res.status(409).send("that Hack Club account is already linked to another user");
-      user = me(req); user.hcaId = hid;
-    } else user = existing || newUser({ hcaId: hid });
-    user.hcaName = name;
-    save();
-    req.session.uid = user.id;
-    res.redirect("/app.html");
-  } catch (e) { console.error(e); res.status(500).send("hack club login error"); }
 });
 
 // ---------- Hackatime link ----------
@@ -380,7 +339,7 @@ app.get("/api/me", (req, res) => {
   const u = me(req);
   if (!u) return res.json(null);
   res.json({
-    name: displayName(u), githubLinked: !!u.githubId, hcaLinked: !!u.hcaId, hackatimeLinked: !!u.hackatimeId,
+    name: displayName(u), hackatimeLinked: !!u.hackatimeId,
     hours: +hoursOf(u).toFixed(2), points: balance(u),
     submissions: db.submissions.filter((s) => s.userId === u.id).map((s) => ({
       week: s.week, title: s.title, url: s.url, repo: s.repo, description: s.description,

@@ -81,15 +81,10 @@ setInterval(tick, 1000);
 
 // ---------- account ----------
 function renderAccount() {
-  if (!ME) {
-    $("account").innerHTML = '<p><a href="/auth/hackclub"><button class="primary">Log in with Hack Club</button></a> <a href="/auth/github"><button>Log in with GitHub</button></a></p>';
-    return;
-  }
+  if (!ME) { $("account").innerHTML = '<a href="/auth/github"><button class="primary">Log in with GitHub</button></a>'; return; }
   $("account").innerHTML = `
     <table>
       <tr><td>Signed in as</td><td>${esc(ME.name)} <button onclick="logout()">Log out</button></td></tr>
-      <tr><td>Hack Club</td><td>${ME.hcaLinked ? "Linked" : '<a href="/auth/hackclub">Link Hack Club</a>'}</td></tr>
-      <tr><td>GitHub</td><td>${ME.githubLinked ? "Linked" : '<a href="/auth/github">Link GitHub</a>'}</td></tr>
       <tr><td>Hackatime</td><td>${ME.hackatimeLinked
         ? 'Linked <button onclick="sync()">Sync hours</button> <button onclick="unlink()">Unlink</button>'
         : '<a href="/auth/hackatime">Connect Hackatime</a>'}</td></tr>

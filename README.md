@@ -16,7 +16,7 @@ Set `DEMO_MODE=true` to fake hours without Hackatime.
 
 ## Flow
 - `/` is the landing page (image + button), `/app.html` is the app.
-- Login with Hack Club Auth (OIDC, scopes `openid profile`) or GitHub. Logging in with the second one while signed in links it to the same account. Public name is first name + last initial for Hack Club users.
+- GitHub OAuth = login (session cookie).
 - Hackatime OAuth = link. Calls `/api/v1/authenticated/me`, stores only the Hackatime user id (no token).
 - Jam week N runs from `CHALLENGE_START + (N-1)*7d` to `+N*7d`. Submissions can only be created or edited during that week.
 - Each submission needs: title, description (30-1000 chars), playable link, code link (GitHub/GitLab/Codeberg/Bitbucket/SourceHut), screenshot, one Hackatime project with at least `MIN_HOURS` (10) hours that week, and every checklist item ticked. All checked server-side.
