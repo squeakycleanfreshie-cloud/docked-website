@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docked</title>
+    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+        html {
+            overflow-y: scroll;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        html::-webkit-scrollbar {
+            display: none;
+        }
+        .wrap {
+            position: relative;
+        }
+        img {
+            width: 100%;
+            display: block;
+        }
+        .rsvp-btn {
+            position: absolute;
+            left: 50%;
+            top: 21%;
+            transform: translateX(-50%);
+            display: inline-block;
+            padding: 18px 48px;
+            background: #e5342a;
+            color: #fff;
+            font-family: sans-serif;
+            font-weight: 800;
+            font-size: 22px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            text-decoration: none;
+            border: 3px solid #fff;
+            border-radius: 0;
+            box-shadow: 6px 6px 0 #000;
+            transition: transform 0.1s ease, box-shadow 0.1s ease;
+        }
+        .rsvp-btn:hover {
+            transform: translateX(-50%) translate(2px, 2px);
+            box-shadow: 3px 3px 0 #000;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <img src="home.png" alt="">
+        <a href="/app.html" class="rsvp-btn">RSVP now</a>
+    </div>
+</body>
+</html>

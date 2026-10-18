@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docked</title>
+<style>
+  body { font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  h2 { margin: 40px 0 12px; font-size: 18px; padding-bottom: 6px; border-bottom: 1px solid #ddd; }
+  h3 { margin: 0 0 4px; font-size: 16px; }
+  a { color: #c0272d; }
+  section { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px; margin: 0 0 12px; }
+  section.locked { color: #777; background: #fafafa; }
+  button { font: inherit; padding: 4px 12px; border: 1px solid #1a1a1a; background: #fff; border-radius: 3px; cursor: pointer; }
+  button.primary { background: #c0272d; border-color: #c0272d; color: #fff; }
+  input, select { font: inherit; padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px; box-sizing: border-box; }
+  label.f { display: block; margin: 10px 0 2px; font-size: 14px; color: #555; }
+  input.w, select.w { width: 100%; }
+  .muted { color: #777; font-size: 14px; }
+  .bar { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+  #countdown { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .check { display: flex; gap: 8px; margin: 6px 0; font-size: 14px; align-items: flex-start; }
+  .check input { margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 0; border-bottom: 1px solid #eee; }
+  td:last-child { text-align: right; white-space: nowrap; }
+  ul { margin: 6px 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<h1>Docked</h1>
+<div class="bar">
+  <span id="weekLabel" class="muted"></span>
+  <span id="countdown"></span>
+</div>
+
+<h2>Account</h2>
+<div id="account">Loading...</div>
+
+<h2>Game jams</h2>
+<div id="jams"></div>
+
+<h2>Rewards store</h2>
+<div id="store"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const safeUrl = (u) => (/^https?:\/\//.test(u) ? esc(u) : "#");
+const fmtDate = (t) => new Date(t).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+async function api(path, method = "GET", body) {
+  const r = await fetch(path, { method, headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { alert(j.error || r.status); throw new Error(j.error || r.status); }
+  return j;
+}
+
+let ME = null, STATUS = null, JAMS = [], PROJECTS = [], offset = 0;
+
+// ---------- countdown ----------
+function tick() {
+  if (!STATUS) return;
+  const now = Date.now() + offset;
+  let target = null, label = "";
+  if (STATUS.phase === "before") { target = STATUS.start; label = "Starts in "; }
+  else if (STATUS.phase === "open") { target = STATUS.weekEnd; label = "Week ends in "; }
+  if (!target) { $("countdown").textContent = "Challenge over"; return; }
+  let s = Math.max(0, Math.floor((target - now) / 1000));
+  const d = Math.floor(s / 86400); s %= 86400;
+  const h = Math.floor(s / 3600); s %= 3600;
+  const m = Math.floor(s / 60); s %= 60;
+  $("countdown").textContent = `${label}${d}d ${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`;
+  if (target - now <= 0) setTimeout(init, 1500); // roll over to the next week
+}
+setInterval(tick, 1000);
+
+// ---------- account ----------
+function renderAccount() {
+  if (!ME) { $("account").innerHTML = '<a href="/auth/github">Log in with GitHub</a>'; return; }
+  $("account").innerHTML = `
+    <table>
+      <tr><td>GitHub</td><td>${esc(ME.github)} <button onclick="logout()">Log out</button></td></tr>
+      <tr><td>Hackatime</td><td>${ME.hackatimeLinked
+        ? 'Linked <button onclick="sync()">Sync hours</button> <button onclick="unlink()">Unlink</button>'
+        : '<a href="/auth/hackatime">Connect Hackatime</a>'}</td></tr>
+      <tr><td>Verified hours</td><td>${ME.hours}</td></tr>
+      <tr><td><b>Points</b></td><td><b>${ME.points}</b></td></tr>
+      <tr><td>Orders</td><td>${ME.orders.map((o) => esc(o.itemId)).join(", ") || "None"}</td></tr>
+    </table>
+    ${ME.demoMode ? '<p class="muted">Demo: <input id="dh" type="number" value="1" style="width:70px"> hours <button onclick="demoLog()">Log</button></p>' : ""}`;
+}
+async function logout() { await api("/auth/logout", "POST"); location.reload(); }
+async function unlink() { await api("/api/hackatime/unlink", "POST"); init(); }
+async function sync() { await api("/api/sync", "POST"); init(); }
+async function demoLog() { await api("/api/demo/log-hours", "POST", { hours: Number($("dh").value) }); init(); }
+
+// ---------- jams ----------
+function jamForm(j, mine) {
+  if (!ME) return '<p class="muted">Log in to submit.</p>';
+  if (!ME.hackatimeLinked) return '<p class="muted">Connect Hackatime to submit.</p>';
+  const names = PROJECTS.map((p) => p.name);
+  if (mine?.project && !names.includes(mine.project)) names.unshift(mine.project);
+  const opts = PROJECTS.length || mine
+    ? names.map((n) => {
+        const p = PROJECTS.find((x) => x.name === n);
+        return `<option value="${esc(n)}" ${mine?.project === n ? "selected" : ""}>${esc(n)}${p ? ` (${p.hours}h this week)` : ""}</option>`;
+      }).join("")
+    : "";
+  const checked = mine?.checklist || [];
+  return `
+    <label class="f">Game title</label>
+    <input class="w" id="title" value="${esc(mine?.title)}">
+    <label class="f">Playable link</label>
+    <input class="w" id="url" placeholder="https://" value="${esc(mine?.url)}">
+    <label class="f">Hackatime project</label>
+    <select class="w" id="project"><option value="">Select a project</option>${opts}</select>
+    ${PROJECTS.length || mine ? "" : '<div class="muted">No Hackatime projects with time logged this week yet.</div>'}
+    <label class="f">Checklist (all required)</label>
+    ${STATUS.checklist.map((c) => `
+      <label class="check"><input type="checkbox" class="ck" value="${esc(c.key)}" ${checked.includes(c.key) ? "checked" : ""}>
+      <span>${esc(c.text)}</span></label>`).join("")}
+    <p><button class="primary" onclick="submitJam(${j.week})">${mine ? "Update submission" : "Submit"}</button></p>`;
+}
+
+function renderJams() {
+  $("jams").innerHTML = JAMS.map((j) => {
+    const mine = ME?.submissions.find((s) => s.week === j.week);
+    const open = j.state === "open";
+    const tag = { open: "Open now", upcoming: "Not started", closed: "Closed" }[j.state];
+    return `
+    <section class="${open ? "" : "locked"}">
+      <div class="bar"><h3>Week ${j.week}: ${esc(j.theme)}</h3><span class="muted">${tag}</span></div>
+      <div class="muted">${fmtDate(j.start)} to ${fmtDate(j.end)}</div>
+      ${mine && !open ? `<p>Your submission: <a href="${safeUrl(mine.url)}">${esc(mine.title)}</a> · ${mine.hours}h · ${mine.points} pts</p>` : ""}
+      ${open ? jamForm(j, mine) : ""}
+      ${j.submissions.length ? `<ul>${j.submissions.map((s) =>
+        `<li>${esc(s.by)}: <a href="${safeUrl(s.url)}">${esc(s.title)}</a></li>`).join("")}</ul>` : ""}
+    </section>`;
+  }).join("");
+}
+
+async function submitJam(week) {
+  const checklist = [...document.querySelectorAll(".ck:checked")].map((c) => c.value);
+  const r = await api(`/api/jams/${week}/submit`, "POST", {
+    title: $("title").value, url: $("url").value, project: $("project").value, checklist });
+  alert(`Saved. ${r.hours}h counted so far.`);
+  init();
+}
+
+// ---------- store ----------
+async function loadStore() {
+  const items = await api("/api/store");
+  $("store").innerHTML = `<table>${items.map((i) => `
+    <tr><td>${esc(i.name)}</td><td>${i.cost} pts <button onclick="redeem('${esc(i.id)}')">Redeem</button></td></tr>`).join("")}</table>`;
+}
+async function redeem(id) { await api("/api/store/redeem", "POST", { itemId: id }); init(); }
+
+// ---------- init ----------
+async function init() {
+  STATUS = await api("/api/status");
+  offset = STATUS.now - Date.now();
+  $("weekLabel").textContent = STATUS.phase === "open" ? `Week ${STATUS.week} of 10`
+    : STATUS.phase === "before" ? "Not started" : "Finished";
+  ME = await api("/api/me");
+  PROJECTS = [];
+  if (ME?.hackatimeLinked && STATUS.phase === "open") {
+    try { PROJECTS = await api("/api/hackatime/projects"); } catch {}
+  }
+  JAMS = await api("/api/jams");
+  renderAccount(); renderJams(); tick();
+}
+init(); loadStore();
+</script>
+</body>
+</html>
