@@ -187,7 +187,9 @@ async function htStats(hid, from, to) {
   return { projects, banned: data?.trust_factor?.trust_value === 1 };
 }
 const windowFor = (w) => [weekStart(w), new Date(Math.min(Date.now(), weekEnd(w).getTime()))];
-const pointsFor = (seconds) => Math.floor((seconds / 3600) * PPH);
+// Award 1 coin per whole hour above the weekly 10-hour target.
+const pointsFor = (seconds) =>
+  Math.max(0, Math.floor(seconds / 3600) - MINH);
 
 // ---------- weekly target, out mode, streak freezes ----------
 const GOAL = Number(GOAL_HOURS), OUT_MULT = Number(OUT_MULTIPLIER);
