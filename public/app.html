@@ -26,6 +26,11 @@
   td { padding: 6px 0; border-bottom: 1px solid #eee; }
   td:last-child { text-align: right; white-space: nowrap; }
   ul { margin: 6px 0; padding-left: 20px; }
+  .tabs { display: flex; gap: 4px; margin-top: 32px; border-bottom: 1px solid #ddd; }
+  .tabs button { border: 1px solid #ddd; border-bottom: none; border-radius: 3px 3px 0 0; background: #fafafa; color: #555; margin-bottom: -1px; padding: 6px 18px; }
+  .tabs button.active { background: #fff; color: #1a1a1a; font-weight: 600; border-color: #ddd; border-bottom: 1px solid #fff; }
+  .tabs + div h2 { margin-top: 20px; border-bottom: none; }
+  [hidden] { display: none !important; }
   textarea { font: inherit; padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px; box-sizing: border-box; width: 100%; min-height: 90px; resize: vertical; }
   .thumb { max-width: 240px; max-height: 160px; display: block; margin: 6px 0; border: 1px solid #ddd; }
 </style>
@@ -40,11 +45,21 @@
 <h2>Account</h2>
 <div id="account">Loading...</div>
 
-<h2>This week's jam</h2>
-<div id="jams"></div>
+<nav class="tabs">
+  <button id="btn-jam" onclick="showTab('jam')">Jam</button>
+  <button id="btn-shop" onclick="showTab('shop')">Shop</button>
+</nav>
 
-<h2>Rewards store</h2>
-<div id="store"></div>
+<div id="tab-jam">
+  <h2>This week's jam</h2>
+  <div id="jams"></div>
+</div>
+
+<div id="tab-shop" hidden>
+  <h2>Rewards store</h2>
+  <p class="muted">Your balance: <b id="shopPoints"></b></p>
+  <div id="store"></div>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -197,6 +212,15 @@ async function loadStore() {
 }
 async function redeem(id) { await api("/api/store/redeem", "POST", { itemId: id }); init(); }
 
+// ---------- tabs ----------
+function showTab(name) {
+  $("tab-jam").hidden = name !== "jam";
+  $("tab-shop").hidden = name !== "shop";
+  $("btn-jam").classList.toggle("active", name === "jam");
+  $("btn-shop").classList.toggle("active", name === "shop");
+  history.replaceState(null, "", "#" + name);
+}
+
 // ---------- init ----------
 async function init() {
   STATUS = await api("/api/status");
@@ -210,7 +234,9 @@ async function init() {
   }
   JAMS = await api("/api/jams");
   renderAccount(); renderJams(); tick();
+  $("shopPoints").textContent = ME ? ME.points + " pts" : "log in to see";
 }
+showTab(location.hash === "#shop" ? "shop" : "jam");
 init(); loadStore();
 </script>
 </body>
