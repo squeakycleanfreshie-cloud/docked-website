@@ -26,6 +26,8 @@
   td { padding: 6px 0; border-bottom: 1px solid #eee; }
   td:last-child { text-align: right; white-space: nowrap; }
   ul { margin: 6px 0; padding-left: 20px; }
+  textarea { font: inherit; padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px; box-sizing: border-box; width: 100%; min-height: 90px; resize: vertical; }
+  .thumb { max-width: 240px; max-height: 160px; display: block; margin: 6px 0; border: 1px solid #ddd; }
 </style>
 </head>
 <body>
@@ -38,7 +40,7 @@
 <h2>Account</h2>
 <div id="account">Loading...</div>
 
-<h2>Game jams</h2>
+<h2>This week's jam</h2>
 <div id="jams"></div>
 
 <h2>Rewards store</h2>
@@ -58,7 +60,7 @@ async function api(path, method = "GET", body) {
   return j;
 }
 
-let ME = null, STATUS = null, JAMS = [], PROJECTS = [], offset = 0;
+let ME = null, STATUS = null, JAMS = [], PROJECTS = [], offset = 0, SHOT = null;
 
 // ---------- countdown ----------
 function tick() {
@@ -79,10 +81,15 @@ setInterval(tick, 1000);
 
 // ---------- account ----------
 function renderAccount() {
-  if (!ME) { $("account").innerHTML = '<a href="/auth/github">Log in with GitHub</a>'; return; }
+  if (!ME) {
+    $("account").innerHTML = '<p><a href="/auth/hackclub"><button class="primary">Log in with Hack Club</button></a> <a href="/auth/github"><button>Log in with GitHub</button></a></p>';
+    return;
+  }
   $("account").innerHTML = `
     <table>
-      <tr><td>GitHub</td><td>${esc(ME.github)} <button onclick="logout()">Log out</button></td></tr>
+      <tr><td>Signed in as</td><td>${esc(ME.name)} <button onclick="logout()">Log out</button></td></tr>
+      <tr><td>Hack Club</td><td>${ME.hcaLinked ? "Linked" : '<a href="/auth/hackclub">Link Hack Club</a>'}</td></tr>
+      <tr><td>GitHub</td><td>${ME.githubLinked ? "Linked" : '<a href="/auth/github">Link GitHub</a>'}</td></tr>
       <tr><td>Hackatime</td><td>${ME.hackatimeLinked
         ? 'Linked <button onclick="sync()">Sync hours</button> <button onclick="unlink()">Unlink</button>'
         : '<a href="/auth/hackatime">Connect Hackatime</a>'}</td></tr>
@@ -113,10 +120,18 @@ function jamForm(j, mine) {
   return `
     <label class="f">Game title</label>
     <input class="w" id="title" value="${esc(mine?.title)}">
+    <label class="f">Description (30 to 1000 characters)</label>
+    <textarea id="description">${esc(mine?.description)}</textarea>
     <label class="f">Playable link</label>
     <input class="w" id="url" placeholder="https://" value="${esc(mine?.url)}">
+    <label class="f">Code link (GitHub, GitLab or similar)</label>
+    <input class="w" id="repo" placeholder="https://github.com/you/your-game" value="${esc(mine?.repo)}">
+    <label class="f">Screenshot (png, jpg or webp)${mine?.screenshot ? " - leave empty to keep the current one" : ""}</label>
+    <input type="file" id="shot" accept="image/png,image/jpeg,image/webp" onchange="pickShot(this)">
+    <img id="shotPreview" class="thumb" ${mine?.screenshot ? `src="${esc(mine.screenshot)}"` : 'style="display:none"'} alt="">
     <label class="f">Hackatime project</label>
     <select class="w" id="project"><option value="">Select a project</option>${opts}</select>
+    <div class="muted">Needs at least ${STATUS.minHours} hours on the project this week.</div>
     ${PROJECTS.length || mine ? "" : '<div class="muted">No Hackatime projects with time logged this week yet.</div>'}
     <label class="f">Checklist (all required)</label>
     ${STATUS.checklist.map((c) => `
@@ -126,7 +141,14 @@ function jamForm(j, mine) {
 }
 
 function renderJams() {
-  $("jams").innerHTML = JAMS.map((j) => {
+  const current = JAMS.filter((j) => j.state === "open");
+  if (!current.length) {
+    $("jams").innerHTML = `<p class="muted">${STATUS.phase === "before"
+      ? "The first jam starts " + fmtDate(STATUS.start) + "."
+      : "All jams are finished."}</p>`;
+    return;
+  }
+  $("jams").innerHTML = current.map((j) => {
     const mine = ME?.submissions.find((s) => s.week === j.week);
     const open = j.state === "open";
     const tag = { open: "Open now", upcoming: "Not started", closed: "Closed" }[j.state];
@@ -137,15 +159,37 @@ function renderJams() {
       ${mine && !open ? `<p>Your submission: <a href="${safeUrl(mine.url)}">${esc(mine.title)}</a> · ${mine.hours}h · ${mine.points} pts</p>` : ""}
       ${open ? jamForm(j, mine) : ""}
       ${j.submissions.length ? `<ul>${j.submissions.map((s) =>
-        `<li>${esc(s.by)}: <a href="${safeUrl(s.url)}">${esc(s.title)}</a></li>`).join("")}</ul>` : ""}
+        `<li>${esc(s.by)}: <a href="${safeUrl(s.url)}">${esc(s.title)}</a> (<a href="${safeUrl(s.repo)}">code</a>)
+          <div class="muted">${esc(s.description)}</div>
+          ${s.screenshot ? `<img class="thumb" src="${esc(s.screenshot)}" alt="">` : ""}</li>`).join("")}</ul>` : ""}
     </section>`;
   }).join("");
+}
+
+function pickShot(input) {
+  const f = input.files[0];
+  SHOT = null;
+  if (!f) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(f.type)) { alert("Use a png, jpg or webp"); input.value = ""; return; }
+  const img = new Image();
+  img.onload = () => {
+    const scale = Math.min(1, 1600 / img.width);
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    SHOT = c.toDataURL("image/jpeg", 0.85);
+    const pv = $("shotPreview"); pv.src = SHOT; pv.style.display = "block";
+  };
+  img.onerror = () => alert("Could not read that image");
+  img.src = URL.createObjectURL(f);
 }
 
 async function submitJam(week) {
   const checklist = [...document.querySelectorAll(".ck:checked")].map((c) => c.value);
   const r = await api(`/api/jams/${week}/submit`, "POST", {
-    title: $("title").value, url: $("url").value, project: $("project").value, checklist });
+    title: $("title").value, description: $("description").value, url: $("url").value,
+    repo: $("repo").value, project: $("project").value, checklist, screenshot: SHOT });
+  SHOT = null;
   alert(`Saved. ${r.hours}h counted so far.`);
   init();
 }

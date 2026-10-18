@@ -18,12 +18,19 @@ const {
   SESSION_SECRET = "dev-secret",
   GITHUB_CLIENT_ID,
   GITHUB_CLIENT_SECRET,
+  HCA_CLIENT_ID,
+  HCA_CLIENT_SECRET,
+  HCA_HOST = "https://auth.hackclub.com",
   HACKATIME_CLIENT_ID,
   HACKATIME_CLIENT_SECRET,
   CHALLENGE_START = "2026-10-26T00:00:00+11:00", // include a UTC offset
   POINTS_PER_HOUR = 10,
   DEMO_MODE = "false",
+  MIN_HOURS = 10,
+  UPLOAD_DIR = path.join(__dirname, "uploads"),
 } = process.env;
+const MINH = Number(MIN_HOURS);
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 const PPH = Number(POINTS_PER_HOUR);
 const HACKATIME = "https://hackatime.hackclub.com";
 const WEEK_MS = 7 * 24 * 3600 * 1000;
@@ -47,7 +54,7 @@ const STORE = [
 
 // Based on the Horizons shipping guide
 const CHECKLIST = [
-  { key: "repo", text: "Code is in a public GitHub repo" },
+  { key: "repo", text: "Code is in a public repo (GitHub, GitLab or similar)" },
   { key: "playable", text: "Game is playable at a public link (itch.io, GitHub Pages, Vercel, Netlify, Nest or a GitHub Release). Not localhost, a tunnel or Google Drive" },
   { key: "incognito", text: "I opened the link in an incognito window and it works without signing in" },
   { key: "readme", text: "README has a description, screenshots, tech stack and how to play" },
@@ -55,7 +62,7 @@ const CHECKLIST = [
   { key: "commits", text: "Commits were made throughout the week, not in one big dump" },
   { key: "ai", text: "AI wrote less than 30% of the project" },
   { key: "new", text: "Made this week for this theme and not shipped to another Hack Club program" },
-  { key: "hours", text: "I tracked at least 3 hours on the Hackatime project selected below" },
+  { key: "hours", text: `I tracked at least ${MINH} hours on the Hackatime project selected below` },
   { key: "unique", text: "This Hackatime project is not reused from another jam" },
 ];
 
@@ -83,11 +90,13 @@ const balance = (u) => earned(u) + (u.demoPoints || 0) - (u.spentPoints || 0);
 // ---------- app ----------
 const app = express();
 app.set("trust proxy", 1);
-app.use(express.json());
+app.use(express.json({ limit: "4mb" }));
 app.use(session({ secret: SESSION_SECRET, resave: false, saveUninitialized: false,
   cookie: { httpOnly: true, sameSite: "lax", secure: BASE_URL.startsWith("https") } }));
 
 const me = (req) => db.users[req.session.uid];
+const displayName = (u) => (u && (u.githubLogin || u.hcaName)) || "user";
+const newUser = (f) => { const u = { id: crypto.randomUUID(), githubId: null, hcaId: null, hackatimeId: null, spentPoints: 0, demoPoints: 0, ...f }; db.users[u.id] = u; return u; };
 const needLogin = (req, res, next) => (me(req) ? next() : res.status(401).json({ error: "log in with GitHub first" }));
 
 const form = (o) => new URLSearchParams(o).toString();
@@ -116,17 +125,55 @@ app.get("/auth/github/callback", async (req, res) => {
     if (!t.access_token) return res.status(400).send("github token failed");
     const gh = await (await fetch("https://api.github.com/user", {
       headers: { Authorization: `Bearer ${t.access_token}`, "User-Agent": "docked" } })).json();
-    let user = Object.values(db.users).find((u) => u.githubId === gh.id);
-    if (!user) {
-      user = { id: crypto.randomUUID(), githubId: gh.id, githubLogin: gh.login, hackatimeId: null,
-        spentPoints: 0, demoPoints: 0 };
-      db.users[user.id] = user;
-    }
+    const existing = Object.values(db.users).find((u) => u.githubId === gh.id);
+    let user;
+    if (me(req)) { // already logged in: link GitHub to this account
+      if (existing && existing.id !== me(req).id) return res.status(409).send("that GitHub account is already linked to another user");
+      user = me(req); user.githubId = gh.id;
+    } else user = existing || newUser({ githubId: gh.id });
     user.githubLogin = gh.login;
     save();
     req.session.uid = user.id;
     res.redirect("/app.html");
   } catch (e) { console.error(e); res.status(500).send("github login error"); }
+});
+
+// ---------- Hack Club Auth login ----------
+app.get("/auth/hackclub", (req, res) => {
+  const state = (req.session.hcaState = crypto.randomBytes(16).toString("hex"));
+  res.redirect(`${HCA_HOST}/oauth/authorize?` + form({
+    client_id: HCA_CLIENT_ID, redirect_uri: `${BASE_URL}/auth/hackclub/callback`,
+    response_type: "code", scope: "openid profile", state }));
+});
+
+app.get("/auth/hackclub/callback", async (req, res) => {
+  try {
+    if (!req.query.state || req.query.state !== req.session.hcaState) return res.status(400).send("bad state");
+    delete req.session.hcaState;
+    const t = await postForm(`${HCA_HOST}/oauth/token`, {
+      client_id: HCA_CLIENT_ID, client_secret: HCA_CLIENT_SECRET, code: req.query.code,
+      grant_type: "authorization_code", redirect_uri: `${BASE_URL}/auth/hackclub/callback` });
+    if (!t.access_token) return res.status(400).send("hack club auth token failed");
+    const r = await fetch(`${HCA_HOST}/oauth/userinfo`, { headers: { Authorization: `Bearer ${t.access_token}` } });
+    if (!r.ok) return res.status(400).send("hack club auth userinfo failed");
+    const info = await r.json();
+    const hid = String(info.sub || info.id || "");
+    if (!hid) return res.status(400).send("no hack club id");
+    // public display name: first name + last initial
+    const first = String(info.given_name || (info.name || "").split(" ")[0] || "").trim();
+    const last = String(info.family_name || (info.name || "").split(" ").slice(1).join(" ") || "").trim();
+    const name = (first + (last ? " " + last[0] + "." : "")).trim() || "Hack Clubber";
+    const existing = Object.values(db.users).find((u) => u.hcaId === hid);
+    let user;
+    if (me(req)) { // already logged in: link Hack Club to this account
+      if (existing && existing.id !== me(req).id) return res.status(409).send("that Hack Club account is already linked to another user");
+      user = me(req); user.hcaId = hid;
+    } else user = existing || newUser({ hcaId: hid });
+    user.hcaName = name;
+    save();
+    req.session.uid = user.id;
+    res.redirect("/app.html");
+  } catch (e) { console.error(e); res.status(500).send("hack club login error"); }
 });
 
 // ---------- Hackatime link ----------
@@ -187,7 +234,7 @@ app.get("/api/status", (req, res) => {
     phase: w === 0 ? "before" : w > JAMS.length ? "ended" : "open",
     weekStart: w >= 1 && w <= JAMS.length ? weekStart(w).getTime() : null,
     weekEnd: w >= 1 && w <= JAMS.length ? weekEnd(w).getTime() : null,
-    checklist: CHECKLIST, pointsPerHour: PPH,
+    checklist: CHECKLIST, pointsPerHour: PPH, minHours: MINH,
   });
 });
 
@@ -211,9 +258,30 @@ app.get("/api/jams", (req, res) => {
   res.json(JAMS.map((j) => ({
     ...j, start: weekStart(j.week).getTime(), end: weekEnd(j.week).getTime(), state: jamState(j.week),
     submissions: db.submissions.filter((s) => s.week === j.week).map((s) => ({
-      by: db.users[s.userId]?.githubLogin, title: s.title, url: s.url })),
+      by: displayName(db.users[s.userId]), title: s.title, url: s.url, repo: s.repo,
+      description: s.description, screenshot: s.screenshot ? `/uploads/${s.screenshot}` : null })),
   })));
 });
+
+const FORGES = ["github.com", "gitlab.com", "codeberg.org", "bitbucket.org", "sr.ht", "git.sr.ht"];
+function validRepo(u) {
+  try {
+    const x = new URL(u);
+    return /^https?:$/.test(x.protocol) && FORGES.includes(x.hostname.replace(/^www\./, "")) &&
+      x.pathname.split("/").filter(Boolean).length >= 2;
+  } catch { return false; }
+}
+// data URL -> { buf, ext } after checking size and magic bytes (png/jpeg/webp only)
+function parseImage(dataUrl) {
+  const m = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl || "");
+  if (!m) return null;
+  const buf = Buffer.from(m[2], "base64");
+  if (buf.length < 100 || buf.length > 3 * 1024 * 1024) return null;
+  const ok = m[1] === "png" ? buf.slice(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+    : m[1] === "jpeg" ? buf.slice(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
+    : buf.slice(0, 4).toString() === "RIFF" && buf.slice(8, 12).toString() === "WEBP";
+  return ok ? { buf, ext: m[1] === "jpeg" ? "jpg" : m[1] } : null;
+}
 
 // submit/update: only during that jam's week
 app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
@@ -222,9 +290,13 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   if (jamState(week) !== "open") return res.status(403).json({ error: "this jam is not open for submissions" });
   if (!u.hackatimeId) return res.status(400).json({ error: "link Hackatime first" });
 
-  const { title, url, project, checklist } = req.body || {};
+  const { title, description, url, repo, project, checklist, screenshot } = req.body || {};
+  const desc = String(description || "").trim();
   if (!title || !String(title).trim()) return res.status(400).json({ error: "title required" });
+  if (desc.length < 30) return res.status(400).json({ error: "description must be at least 30 characters" });
+  if (desc.length > 1000) return res.status(400).json({ error: "description is over 1000 characters" });
   if (!/^https?:\/\/\S+$/.test(url || "")) return res.status(400).json({ error: "playable link must be an http(s) url" });
+  if (!validRepo(repo)) return res.status(400).json({ error: "code link must be a repo on GitHub, GitLab, Codeberg, Bitbucket or SourceHut" });
   if (!project) return res.status(400).json({ error: "pick a Hackatime project" });
   const done = Array.isArray(checklist) ? checklist : [];
   const missing = CHECKLIST.filter((c) => !done.includes(c.key));
@@ -232,16 +304,28 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   if (db.submissions.some((s) => s.userId === u.id && s.week !== week && s.project === project))
     return res.status(400).json({ error: "that Hackatime project is already used for another jam" });
 
+  let sub = db.submissions.find((s) => s.week === week && s.userId === u.id);
+  const img = screenshot ? parseImage(screenshot) : null;
+  if (screenshot && !img) return res.status(400).json({ error: "screenshot must be a png, jpg or webp under 3MB" });
+  if (!img && !sub?.screenshot) return res.status(400).json({ error: "upload a screenshot" });
+
   try {
     const { projects, banned } = await htStats(u.hackatimeId, ...windowFor(week));
     if (banned) return res.status(403).json({ error: "account flagged by Hackatime" });
     if (!(project in projects)) return res.status(400).json({ error: "no time logged on that project this week" });
-    const seconds = projects[project];
+    const seconds = Math.max(sub?.seconds || 0, projects[project]);
+    if (seconds < MINH * 3600)
+      return res.status(400).json({ error: `need at least ${MINH} hours on that project this week (you have ${(seconds / 3600).toFixed(1)})` });
 
-    let sub = db.submissions.find((s) => s.week === week && s.userId === u.id);
     if (!sub) { sub = { week, userId: u.id }; db.submissions.push(sub); }
-    Object.assign(sub, { title: String(title).trim().slice(0, 100), url, project, checklist: done,
-      seconds: Math.max(sub.seconds || 0, seconds), updatedAt: new Date().toISOString() });
+    if (img) {
+      const name = `${crypto.randomUUID()}.${img.ext}`;
+      fs.writeFileSync(path.join(UPLOAD_DIR, name), img.buf);
+      if (sub.screenshot) fs.unlink(path.join(UPLOAD_DIR, sub.screenshot), () => {});
+      sub.screenshot = name;
+    }
+    Object.assign(sub, { title: String(title).trim().slice(0, 100), description: desc, url, repo, project,
+      checklist: done, seconds, updatedAt: new Date().toISOString() });
     sub.points = Math.max(sub.points || 0, pointsFor(sub.seconds));
     save();
     res.json({ ok: true, hours: +(sub.seconds / 3600).toFixed(2), points: balance(u) });
@@ -296,10 +380,11 @@ app.get("/api/me", (req, res) => {
   const u = me(req);
   if (!u) return res.json(null);
   res.json({
-    github: u.githubLogin, hackatimeLinked: !!u.hackatimeId,
+    name: displayName(u), githubLinked: !!u.githubId, hcaLinked: !!u.hcaId, hackatimeLinked: !!u.hackatimeId,
     hours: +hoursOf(u).toFixed(2), points: balance(u),
     submissions: db.submissions.filter((s) => s.userId === u.id).map((s) => ({
-      week: s.week, title: s.title, url: s.url, project: s.project, checklist: s.checklist,
+      week: s.week, title: s.title, url: s.url, repo: s.repo, description: s.description,
+      screenshot: s.screenshot ? `/uploads/${s.screenshot}` : null, project: s.project, checklist: s.checklist,
       hours: +((s.seconds || 0) / 3600).toFixed(2), points: s.points || 0 })),
     orders: db.orders.filter((o) => o.userId === u.id),
     demoMode: DEMO_MODE === "true",
@@ -308,5 +393,6 @@ app.get("/api/me", (req, res) => {
 
 app.post("/auth/logout", (req, res) => req.session.destroy(() => res.json({ ok: true })));
 
+app.use("/uploads", express.static(UPLOAD_DIR, { setHeaders: (r) => r.set("X-Content-Type-Options", "nosniff") }));
 app.use(express.static(path.join(__dirname, "public")));
 app.listen(PORT, () => console.log(`Docked on ${BASE_URL}`));
