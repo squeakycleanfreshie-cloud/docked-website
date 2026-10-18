@@ -27,6 +27,14 @@ Set `DEMO_MODE=true` to fake hours without Hackatime.
 - One Hackatime account can link to one user only.
 - Checklist is based on the Horizons shipping guide (edit `CHECKLIST` in `server.js`).
 
+## Out mode and freezes
+- Weekly target is `MIN_HOURS` (10) of total Hackatime time across all projects. Tracking starts the week a user first links Hackatime.
+- When a week closes under target you are **out** and owe `OUT_MULTIPLIER` (1.3) x the missed hours. Hours logged in later weeks pay that debt down (live, including the current week). At 0 you are back in.
+- While out you cannot submit jams or redeem items. Freezes can still be bought.
+- Streak freeze costs `POINTS_PER_HOUR` points (the price of an hour). Each one adds 1 hour to a closed week that falls short, applied automatically when the week settles. Freezes bought after a week closes only count for later weeks (closed weeks settle first).
+- Switch 2 bar = total Hackatime hours since the start vs `GOAL_HOURS` (500).
+- Weeks settle lazily when the user loads the app or buys a freeze.
+
 ## API
 - GET `/api/status`, `/api/me`, `/api/jams`, `/api/store`, `/api/hackatime/projects`
 - POST `/api/jams/:week/submit {title,url,project,checklist[]}`, `/api/sync`, `/api/store/redeem {itemId}`, `/api/hackatime/unlink`

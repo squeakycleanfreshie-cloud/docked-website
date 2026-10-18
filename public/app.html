@@ -26,6 +26,7 @@
   td { padding: 6px 0; border-bottom: 1px solid #eee; }
   td:last-child { text-align: right; white-space: nowrap; }
   ul { margin: 6px 0; padding-left: 20px; }
+  progress { width: 200px; max-width: 100%; height: 12px; accent-color: #c0272d; vertical-align: middle; }
   .tabs { display: flex; gap: 4px; margin-top: 32px; border-bottom: 1px solid #ddd; }
   .tabs button { border: 1px solid #ddd; border-bottom: none; border-radius: 3px 3px 0 0; background: #fafafa; color: #555; margin-bottom: -1px; padding: 6px 18px; }
   .tabs button.active { background: #fff; color: #1a1a1a; font-weight: 600; border-color: #ddd; border-bottom: 1px solid #fff; }
@@ -103,7 +104,11 @@ function renderAccount() {
       <tr><td>Hackatime</td><td>${ME.hackatimeLinked
         ? 'Linked <button onclick="sync()">Sync hours</button> <button onclick="unlink()">Unlink</button>'
         : '<a href="/auth/hackatime">Connect Hackatime</a>'}</td></tr>
-      <tr><td>Verified hours</td><td>${ME.hours}</td></tr>
+      <tr><td>Switch 2</td><td><progress value="${Math.min(ME.hours, ME.goalHours)}" max="${ME.goalHours}"></progress> ${ME.hours} / ${ME.goalHours} hours</td></tr>
+      ${ME.streak ? `
+      <tr><td>This week</td><td><progress value="${Math.min(ME.streak.weekHours, ME.streak.weekTarget)}" max="${ME.streak.weekTarget}"></progress> ${ME.streak.weekHours} / ${ME.streak.weekTarget} hours</td></tr>
+      <tr><td>Status</td><td>${ME.streak.out ? `<b>Out</b>: log ${ME.streak.remaining} more hours to get back in` : "In"}</td></tr>
+      <tr><td>Streak freezes</td><td>${ME.streak.freezes}</td></tr>` : ""}
       <tr><td><b>Points</b></td><td><b>${ME.points}</b></td></tr>
       <tr><td>Orders</td><td>${ME.orders.map((o) => esc(o.itemId)).join(", ") || "None"}</td></tr>
     </table>
@@ -118,6 +123,7 @@ async function demoLog() { await api("/api/demo/log-hours", "POST", { hours: Num
 function jamForm(j, mine) {
   if (!ME) return '<p class="muted">Log in to submit.</p>';
   if (!ME.hackatimeLinked) return '<p class="muted">Connect Hackatime to submit.</p>';
+  if (ME.streak?.out) return `<p>You're out. Log ${ME.streak.remaining} more hours to get back in, then you can submit.</p>`;
   const names = PROJECTS.map((p) => p.name);
   if (mine?.project && !names.includes(mine.project)) names.unshift(mine.project);
   const opts = PROJECTS.length || mine
@@ -205,12 +211,22 @@ async function submitJam(week) {
 }
 
 // ---------- store ----------
-async function loadStore() {
-  const items = await api("/api/store");
-  $("store").innerHTML = `<table>${items.map((i) => `
-    <tr><td>${esc(i.name)}</td><td>${i.cost} pts <button onclick="redeem('${esc(i.id)}')">Redeem</button></td></tr>`).join("")}</table>`;
+let ITEMS = [];
+async function loadStore() { ITEMS = await api("/api/store"); renderStore(); }
+function renderStore() {
+  const out = ME?.streak?.out;
+  $("store").innerHTML = (out ? `<p>You're out, so items are locked until you log ${ME.streak.remaining} more hours. Streak freezes are still available.</p>` : "") +
+    `<table>${ITEMS.map((i) => i.kind === "freeze"
+      ? `<tr><td>${esc(i.name)}<div class="muted">${i.cost} pts each. A freeze adds 1 hour to a week you fall short, so you stay in or owe less.</div></td>
+         <td><input id="fq" type="number" min="1" max="50" value="1" style="width:60px"> <button onclick="buyFreeze()">Buy</button></td></tr>`
+      : `<tr><td>${esc(i.name)}</td><td>${i.cost} pts <button onclick="redeem('${esc(i.id)}')" ${out ? "disabled" : ""}>Redeem</button></td></tr>`).join("")}</table>`;
 }
 async function redeem(id) { await api("/api/store/redeem", "POST", { itemId: id }); init(); }
+async function buyFreeze() {
+  const r = await api("/api/store/redeem", "POST", { itemId: "freeze", qty: Number($("fq").value) || 1 });
+  alert(`You now have ${r.freezes} streak freeze${r.freezes === 1 ? "" : "s"}.`);
+  init();
+}
 
 // ---------- tabs ----------
 function showTab(name) {
@@ -233,7 +249,7 @@ async function init() {
     try { PROJECTS = await api("/api/hackatime/projects"); } catch {}
   }
   JAMS = await api("/api/jams");
-  renderAccount(); renderJams(); tick();
+  renderAccount(); renderJams(); renderStore(); tick();
   $("shopPoints").textContent = ME ? ME.points + " pts" : "log in to see";
 }
 showTab(location.hash === "#shop" ? "shop" : "jam");

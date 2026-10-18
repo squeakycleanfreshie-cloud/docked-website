@@ -24,6 +24,8 @@ const {
   POINTS_PER_HOUR = 10,
   DEMO_MODE = "false",
   MIN_HOURS = 10,
+  GOAL_HOURS = 500,
+  OUT_MULTIPLIER = 1.3,
   UPLOAD_DIR = path.join(__dirname, "uploads"),
 } = process.env;
 const MINH = Number(MIN_HOURS);
@@ -41,6 +43,7 @@ const JAMS = [
 ].map((theme, i) => ({ week: i + 1, theme }));
 
 const STORE = [
+  { id: "freeze", name: "Streak freeze (covers 1 hour of a missed week)", cost: PPH, kind: "freeze" },
   { id: "keycaps", name: "Custom keycap set", cost: 150 },
   { id: "mousepad", name: "Desk mat", cost: 200 },
   { id: "cable", name: "Braided USB-C cable", cost: 80 },
@@ -161,6 +164,7 @@ app.get("/auth/hackatime/callback", needLogin, async (req, res) => {
     const taken = Object.values(db.users).find((u) => u.hackatimeId === hid && u.id !== req.session.uid);
     if (taken) return res.status(409).send("that Hackatime account is already linked to another user");
     me(req).hackatimeId = hid; // token not stored; stats are fetched by id
+    ensureStreak(me(req));
     save();
     res.redirect("/app.html");
   } catch (e) { console.error(e); res.status(500).send("hackatime link error"); }
@@ -184,6 +188,86 @@ async function htStats(hid, from, to) {
 }
 const windowFor = (w) => [weekStart(w), new Date(Math.min(Date.now(), weekEnd(w).getTime()))];
 const pointsFor = (seconds) => Math.floor((seconds / 3600) * PPH);
+
+// ---------- weekly target, out mode, streak freezes ----------
+const GOAL = Number(GOAL_HOURS), OUT_MULT = Number(OUT_MULTIPLIER);
+const SKIP = ["Other", "<<LAST_PROJECT>>"]; // Hackatime placeholder projects
+const liveCache = new Map(); // userId -> { t, week, hours }
+
+// all Hackatime hours in a jam week (every project)
+async function totalHours(u, w) {
+  const { projects } = await htStats(u.hackatimeId, ...windowFor(w));
+  return Object.entries(projects).filter(([n]) => !SKIP.includes(n)).reduce((a, [, sec]) => a + sec, 0) / 3600;
+}
+async function liveHours(u, fresh) {
+  const w = currentWeek();
+  if (w < 1 || w > JAMS.length) return 0;
+  const c = liveCache.get(u.id);
+  if (!fresh && c && c.week === w && Date.now() - c.t < 60000) return c.hours;
+  const hours = await totalHours(u, w);
+  liveCache.set(u.id, { t: Date.now(), week: w, hours });
+  return hours;
+}
+
+// streak tracking starts the week a user first has Hackatime linked (earlier weeks are not held against them)
+function ensureStreak(u) {
+  if (!u.streak) u.streak = { out: false, debt: 0, settled: 0, started: false, weeks: {} };
+  if (u.freezes == null) u.freezes = 0;
+  if (!u.streak.started && u.hackatimeId) {
+    u.streak.started = true;
+    u.streak.settled = Math.max(0, currentWeek() - 1);
+  }
+  return u.streak;
+}
+
+// settle one closed week. Freezes each add 1 hour toward the weekly target.
+// In: under target after freezes -> out, owing OUT_MULT x the missed hours.
+// Out: the week's hours (plus freezes) pay the debt down; at 0 you're back in.
+function applyWeek(u, w, hrs) {
+  const st = ensureStreak(u);
+  let used = 0;
+  if (hrs < MINH) { used = Math.min(u.freezes || 0, Math.ceil(MINH - hrs)); u.freezes = (u.freezes || 0) - used; }
+  const eff = hrs + used;
+  if (!st.out) {
+    const missed = Math.max(0, MINH - eff);
+    if (missed > 0) { st.out = true; st.debt = +(OUT_MULT * missed).toFixed(2); }
+  } else {
+    st.debt = +Math.max(0, st.debt - eff).toFixed(2);
+    if (st.debt === 0) st.out = false;
+  }
+  st.weeks[w] = { hours: +hrs.toFixed(2), freezes: used, out: st.out };
+}
+
+const settling = new Map();
+function settle(u) {
+  const st = ensureStreak(u);
+  if (!st.started || !u.hackatimeId) return Promise.resolve();
+  if (settling.has(u.id)) return settling.get(u.id);
+  const p = (async () => {
+    const last = Math.min(currentWeek() - 1, JAMS.length);
+    for (let w = st.settled + 1; w <= last; w++) {
+      applyWeek(u, w, await totalHours(u, w));
+      st.settled = w;
+      save();
+    }
+  })().finally(() => settling.delete(u.id));
+  settling.set(u.id, p);
+  return p;
+}
+
+// null if Hackatime isn't linked. ok=false if Hackatime couldn't be reached.
+async function streakInfo(u, fresh = false) {
+  const st = ensureStreak(u);
+  if (!st.started || !u.hackatimeId) return null;
+  let ok = true, weekHours = 0;
+  try { await settle(u); } catch (e) { ok = false; console.error("settle", e.message); }
+  try { weekHours = await liveHours(u, fresh); } catch (e) { ok = false; console.error("live", e.message); }
+  const remaining = st.out ? Math.max(0, st.debt - weekHours) : 0;
+  const settledHours = Object.values(st.weeks).reduce((a, x) => a + x.hours, 0);
+  return { ok, out: st.out && remaining > 0, remaining: +remaining.toFixed(2), debt: st.debt,
+    weekHours: +weekHours.toFixed(2), weekTarget: MINH, freezes: u.freezes || 0,
+    totalHours: +(settledHours + weekHours).toFixed(2) };
+}
 
 // ---------- status ----------
 app.get("/api/status", (req, res) => {
@@ -248,6 +332,9 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   if (!JAMS.find((j) => j.week === week)) return res.status(404).json({ error: "no such jam" });
   if (jamState(week) !== "open") return res.status(403).json({ error: "this jam is not open for submissions" });
   if (!u.hackatimeId) return res.status(400).json({ error: "link Hackatime first" });
+  const info = await streakInfo(u, true);
+  if (info && !info.ok) return res.status(502).json({ error: "could not reach Hackatime" });
+  if (info?.out) return res.status(403).json({ error: `You're out. Log ${info.remaining} more hours to get back in.` });
 
   const { title, description, url, repo, project, checklist, screenshot } = req.body || {};
   const desc = String(description || "").trim();
@@ -323,10 +410,27 @@ app.post("/api/demo/log-hours", needLogin, (req, res) => {
 // ---------- store ----------
 app.get("/api/store", (req, res) => res.json(STORE));
 
-app.post("/api/store/redeem", needLogin, (req, res) => {
+app.post("/api/store/redeem", needLogin, async (req, res) => {
   const item = STORE.find((i) => i.id === req.body?.itemId);
   if (!item) return res.status(404).json({ error: "no such item" });
   const u = me(req);
+
+  if (item.kind === "freeze") {
+    const qty = Math.floor(Number(req.body?.qty) || 1);
+    if (qty < 1 || qty > 50) return res.status(400).json({ error: "quantity 1-50" });
+    if (!u.hackatimeId) return res.status(400).json({ error: "link Hackatime first" });
+    try { await settle(u); } catch { return res.status(502).json({ error: "could not reach Hackatime" }); } // closed weeks are settled before new freezes exist
+    const cost = item.cost * qty;
+    if (balance(u) < cost) return res.status(400).json({ error: "not enough points" });
+    u.spentPoints = (u.spentPoints || 0) + cost;
+    u.freezes = (u.freezes || 0) + qty;
+    save();
+    return res.json({ ok: true, points: balance(u), freezes: u.freezes });
+  }
+
+  const info = await streakInfo(u, true);
+  if (info && !info.ok) return res.status(502).json({ error: "could not reach Hackatime" });
+  if (info?.out) return res.status(403).json({ error: `You're out. Log ${info.remaining} more hours to get back in.` });
   if (balance(u) < item.cost) return res.status(400).json({ error: "not enough points" });
   u.spentPoints = (u.spentPoints || 0) + item.cost;
   db.orders.push({ userId: u.id, itemId: item.id, cost: item.cost, at: new Date().toISOString() });
@@ -335,12 +439,13 @@ app.post("/api/store/redeem", needLogin, (req, res) => {
 });
 
 // ---------- me ----------
-app.get("/api/me", (req, res) => {
+app.get("/api/me", async (req, res) => {
   const u = me(req);
   if (!u) return res.json(null);
+  const streak = await streakInfo(u);
   res.json({
     name: displayName(u), hackatimeLinked: !!u.hackatimeId,
-    hours: +hoursOf(u).toFixed(2), points: balance(u),
+    hours: streak ? streak.totalHours : 0, goalHours: GOAL, streak, points: balance(u),
     submissions: db.submissions.filter((s) => s.userId === u.id).map((s) => ({
       week: s.week, title: s.title, url: s.url, repo: s.repo, description: s.description,
       screenshot: s.screenshot ? `/uploads/${s.screenshot}` : null, project: s.project, checklist: s.checklist,
