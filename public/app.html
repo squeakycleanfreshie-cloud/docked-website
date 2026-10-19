@@ -4,84 +4,410 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Docked</title>
+
 <style>
-  
-  @font-face {
-    font-family: 'Nintendo DS BIOS';
-    src: url('/fonts/Nintendo-DS-BIOS.ttf') format('truetype');
-    font-weight: normal;
-    font-style: normal;
-    font-display: swap;
+@font-face {
+  font-family: "Nintendo DS BIOS";
+  src: url("/fonts/Nintendo-DS-BIOS.ttf") format("truetype");
+  font-display: swap;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #1a1a1a;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Nintendo DS BIOS", sans-serif;
+}
+
+h1 {
+  margin: 0;
+  font-size: 50px;
+}
+
+h2 {
+  margin: 40px 0 12px;
+  font-size: 25px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ddd;
+}
+
+h3 {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+a {
+  color: #c0272d;
+}
+
+section {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 14px 16px;
+  margin: 0 0 12px;
+}
+
+section.locked {
+  color: #777;
+  background: #fafafa;
+}
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid #1a1a1a;
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #c0272d;
+  border-color: #c0272d;
+  color: #fff;
+}
+
+button:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+input, select {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+}
+
+input.w, select.w {
+  width: 100%;
+}
+
+label.f {
+  display: block;
+  margin: 10px 0 2px;
+  font-size: 14px;
+  color: #555;
+}
+
+textarea {
+  font: inherit;
+  padding: 8px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  width: 100%;
+  min-height: 90px;
+  resize: vertical;
+}
+
+.muted {
+  color: #777;
+  font-size: 14px;
+}
+
+.bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#countdown {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+td {
+  padding: 8px 0;
+  border-bottom: 1px solid #eee;
+}
+
+td:last-child {
+  text-align: right;
+}
+
+ul {
+  margin: 6px 0;
+  padding-left: 20px;
+}
+
+progress {
+  accent-color: #c0272d;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 32px;
+  border-bottom: 1px solid #ddd;
+}
+
+.tabs button {
+  border: 1px solid #ddd;
+  border-bottom: none;
+  border-radius: 3px 3px 0 0;
+  background: #fafafa;
+  color: #555;
+  margin-bottom: -1px;
+  padding: 6px 18px;
+}
+
+.tabs button.active {
+  background: #fff;
+  color: #1a1a1a;
+  font-weight: 600;
+  border-bottom: 1px solid #fff;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 14px;
+  align-items: flex-start;
+}
+
+.check input {
+  margin-top: 4px;
+}
+
+.thumb {
+  max-width: 240px;
+  max-height: 160px;
+  display: block;
+  margin: 6px 0;
+  border: 1px solid #ddd;
+}
+
+.draft-note {
+  background: #f7f7f7;
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  margin: 12px 0;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+/* Header and profile dropdown */
+
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.profile-wrap {
+  position: relative;
+}
+
+.profile-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #c0272d;
+  color: #fff;
+  font-weight: 700;
+}
+
+.profile-menu {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: calc(100% + 8px);
+  width: min(340px, calc(100vw - 40px));
+  padding: 14px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-shadow: 0 8px 24px #00000012;
+}
+
+.profile-menu table {
+  font-size: 14px;
+}
+
+.profile-menu td {
+  overflow-wrap: anywhere;
+}
+
+.profile-menu td:last-child {
+  padding-left: 10px;
+}
+
+/* Main progress panel */
+
+.progress-panel {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 22px;
+  margin: 20px 0 28px;
+  background: #fff;
+}
+
+.progress-panel h2 {
+  margin: 0 0 6px;
+  padding: 0;
+  border: 0;
+}
+
+.progress-row {
+  margin-top: 24px;
+}
+
+.progress-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
+.progress-heading strong {
+  font-size: 17px;
+}
+
+.progress-heading span {
+  color: #666;
+  font-size: 14px;
+}
+
+progress.big-progress {
+  display: block;
+  width: 100%;
+  height: 25px;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  accent-color: #c0272d;
+}
+
+progress.big-progress::-webkit-progress-bar {
+  background: #f0f0f0;
+}
+
+progress.big-progress::-webkit-progress-value {
+  background: #c0272d;
+}
+
+progress.big-progress::-moz-progress-bar {
+  background: #c0272d;
+}
+
+.progress-foot {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 7px;
+  color: #777;
+  font-size: 13px;
+}
+
+.progress-empty {
+  padding: 14px;
+  border: 1px dashed #ddd;
+  color: #777;
+  font-size: 14px;
+}
+
+@media (max-width: 500px) {
+  body {
+    padding: 18px 12px 48px;
   }
 
-
-
-
-
-  body { font: 16px/1.5 system-ui, sans-serif; color: #1a1a1a; max-width: 720px; margin: 0 auto; padding: 24px 16px 64px; }
-  
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Nintendo DS BIOS', sans-serif;
+  .progress-panel {
+    padding: 16px;
   }
 
-  h1 {
-    margin: 0 0 4px;
-    font-size: 50px;
+  .profile-button {
+    padding: 5px 8px;
   }
 
-  h2 {
-    margin: 40px 0 12px;
-    font-size: 25px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #ddd;
+  .site-header h1 {
+    font-size: 42px;
   }
-
-  h3 {
-    margin: 0 0 4px;
-    font-size: 20px;
-  }
-
-  a { color: #c0272d; }
-  section { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px; margin: 0 0 12px; }
-  section.locked { color: #777; background: #fafafa; }
-  button { font: inherit; padding: 6px 12px; border: 1px solid #1a1a1a; background: #fff; border-radius: 3px; cursor: pointer; }
-  button.primary { background: #c0272d; border-color: #c0272d; color: #fff; }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  input, select { font: inherit; padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px; box-sizing: border-box; }
-  label.f { display: block; margin: 10px 0 2px; font-size: 14px; color: #555; }
-  input.w, select.w { width: 100%; }
-  .muted { color: #777; font-size: 14px; }
-  .bar { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
-  #countdown { font-variant-numeric: tabular-nums; font-weight: 600; }
-  .check { display: flex; gap: 8px; margin: 6px 0; font-size: 14px; align-items: flex-start; }
-  .check input { margin-top: 4px; }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 6px 0; border-bottom: 1px solid #eee; }
-  td:last-child { text-align: right; white-space: nowrap; }
-  ul { margin: 6px 0; padding-left: 20px; }
-  progress { width: 200px; max-width: 100%; height: 12px; accent-color: #c0272d; vertical-align: middle; }
-  .tabs { display: flex; gap: 4px; margin-top: 32px; border-bottom: 1px solid #ddd; }
-  .tabs button { border: 1px solid #ddd; border-bottom: none; border-radius: 3px 3px 0 0; background: #fafafa; color: #555; margin-bottom: -1px; padding: 6px 18px; }
-  .tabs button.active { background: #fff; color: #1a1a1a; font-weight: 600; border-color: #ddd; border-bottom: 1px solid #fff; }
-  .tabs + div h2 { margin-top: 20px; border-bottom: none; }
-  [hidden] { display: none !important; }
-  textarea { font: inherit; padding: 4px 8px; border: 1px solid #aaa; border-radius: 3px; box-sizing: border-box; width: 100%; min-height: 90px; resize: vertical; }
-  .thumb { max-width: 240px; max-height: 160px; display: block; margin: 6px 0; border: 1px solid #ddd; }
-  .draft-note { background: #f7f7f7; padding: 10px 12px; border-radius: 4px; font-size: 14px; margin: 12px 0; }
-  .draft-status { font-size: 13px; padding: 2px 7px; border: 1px solid #bbb; border-radius: 3px; }
-  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+}
 </style>
 </head>
+
 <body>
 
-<h1>Docked</h1>
+<header class="site-header">
+  <h1>Docked</h1>
+
+  <div class="profile-wrap">
+    <button
+      class="profile-button"
+      id="profileButton"
+      onclick="toggleProfile()"
+      aria-expanded="false"
+    >
+      <span class="avatar" id="profileAvatar">?</span>
+      <span id="profileLabel">Account</span>
+      <span aria-hidden="true">⌄</span>
+    </button>
+
+    <div class="profile-menu" id="profileMenu" hidden>
+      <div id="account">Loading...</div>
+    </div>
+  </div>
+</header>
+
 <div class="bar">
   <span id="weekLabel" class="muted"></span>
   <span id="countdown"></span>
 </div>
 
-<h2>Account</h2>
-<div id="account">Loading...</div>
+<section class="progress-panel">
+  <h2>Your progress</h2>
+  <p class="muted" style="margin:0">
+    Keep building. Every hour gets you closer to the finish.
+  </p>
+
+  <div id="progressOverview">
+    <div class="progress-empty">Loading your progress...</div>
+  </div>
+</section>
 
 <nav class="tabs">
   <button id="btn-jam" onclick="showTab('jam')">Jam</button>
@@ -110,7 +436,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({
   "'": "&#39;"
 }[c]));
 
-const safeUrl = (u) => (/^https?:\/\//.test(u || "") ? esc(u) : "#");
+const safeUrl = (u) =>
+  (/^https?:\/\//.test(u || "") ? esc(u) : "#");
 
 const fmtDate = (t) => new Date(t).toLocaleString([], {
   dateStyle: "medium",
@@ -142,7 +469,33 @@ let offset = 0;
 let SHOT = null;
 let ITEMS = [];
 
+// ---------- profile dropdown ----------
+
+function toggleProfile() {
+  const menu = $("profileMenu");
+  const open = menu.hidden;
+
+  menu.hidden = !open;
+
+  $("profileButton").setAttribute(
+    "aria-expanded",
+    String(open)
+  );
+}
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".profile-wrap")) {
+    $("profileMenu").hidden = true;
+
+    $("profileButton").setAttribute(
+      "aria-expanded",
+      "false"
+    );
+  }
+});
+
 // ---------- countdown ----------
+
 function tick() {
   if (!STATUS) return;
 
@@ -182,76 +535,151 @@ function tick() {
 
 setInterval(tick, 1000);
 
-// ---------- account ----------
+// ---------- account and progress ----------
+
 function renderAccount() {
+  const menu = $("account");
+
   if (!ME) {
-    $("account").innerHTML =
-      '<a href="/auth/github"><button class="primary">Log in with GitHub</button></a>';
+    $("profileLabel").textContent = "Log in";
+    $("profileAvatar").textContent = "?";
+
+    menu.innerHTML = `
+      <p class="muted">
+        Sign in to track your progress and rewards.
+      </p>
+      <a href="/auth/github">
+        <button class="primary">Log in with GitHub</button>
+      </a>
+    `;
+
+    $("progressOverview").innerHTML = `
+      <div class="progress-empty">
+        Log in with GitHub to see your overall and weekly progress.
+      </div>
+    `;
+
     return;
   }
+
+  const name = ME.name || ME.githubLogin || "Account";
 
   const draftCount = (ME.submissions || []).filter(
     (s) => s.status === "draft"
   ).length;
 
-  $("account").innerHTML = `
+  const goal = Number(ME.goalHours) || 500;
+  const hours = Number(ME.hours) || 0;
+  const percent = Math.min(100, Math.round(hours / goal * 100));
+
+  $("profileLabel").textContent = name;
+  $("profileAvatar").textContent =
+    name.trim().charAt(0).toUpperCase() || "?";
+
+  // Large progress bars are the main focus of the dashboard.
+
+  $("progressOverview").innerHTML = `
+    <div class="progress-row">
+      <div class="progress-heading">
+        <strong>Switch 2 goal</strong>
+        <span>${percent}% complete</span>
+      </div>
+
+      <progress
+        class="big-progress"
+        value="${Math.min(hours, goal)}"
+        max="${goal}"
+      ></progress>
+
+      <div class="progress-foot">
+        <span>${hours.toFixed(1)} hours logged</span>
+        <span>${goal} hours goal</span>
+      </div>
+    </div>
+
+    ${ME.streak ? `
+      <div class="progress-row">
+        <div class="progress-heading">
+          <strong>This week's progress</strong>
+          <span>
+            ${Number(ME.streak.weekHours || 0).toFixed(1)}
+            / ${Number(ME.streak.weekTarget || 0)} hours
+          </span>
+        </div>
+
+        <progress
+          class="big-progress"
+          value="${Math.min(
+            Number(ME.streak.weekHours) || 0,
+            Number(ME.streak.weekTarget) || 1
+          )}"
+          max="${Number(ME.streak.weekTarget) || 1}"
+        ></progress>
+
+        <div class="progress-foot">
+          <span>
+            ${ME.streak.out
+              ? `Out — log ${ME.streak.remaining} more hours to get back in`
+              : "Keep up the good work!"}
+          </span>
+          <span>${ME.streak.freezes} streak freezes</span>
+        </div>
+      </div>
+    ` : ""}
+  `;
+
+  // Account settings are now in the profile dropdown.
+
+  menu.innerHTML = `
     <table>
       <tr>
         <td>Signed in as</td>
-        <td>${esc(ME.name)} <button onclick="logout()">Log out</button></td>
+        <td><b>${esc(name)}</b></td>
       </tr>
+
       <tr>
         <td>Hackatime</td>
-        <td>${ME.hackatimeLinked
-          ? 'Linked <button onclick="sync()">Sync hours</button> <button onclick="unlink()">Unlink</button>'
-          : '<a href="/auth/hackatime">Connect Hackatime</a>'}
-        </td>
-      </tr>
-      <tr>
-        <td>Switch 2</td>
         <td>
-          <progress value="${Math.min(ME.hours || 0, ME.goalHours || 500)}"
-            max="${ME.goalHours || 500}"></progress>
-          ${ME.hours || 0} / ${ME.goalHours || 500} hours
+          ${ME.hackatimeLinked
+            ? `Linked
+              <div class="actions">
+                <button onclick="sync()">Sync hours</button>
+                <button onclick="unlink()">Unlink</button>
+              </div>`
+            : '<a href="/auth/hackatime">Connect Hackatime</a>'}
         </td>
       </tr>
-      ${ME.streak ? `
-        <tr>
-          <td>This week</td>
-          <td>
-            <progress value="${Math.min(ME.streak.weekHours, ME.streak.weekTarget)}"
-              max="${ME.streak.weekTarget}"></progress>
-            ${ME.streak.weekHours} / ${ME.streak.weekTarget} hours
-          </td>
-        </tr>
-        <tr>
-          <td>Status</td>
-          <td>${ME.streak.out
-            ? `<b>Out</b>: log ${ME.streak.remaining} more hours to get back in`
-            : "In"}
-          </td>
-        </tr>
-        <tr>
-          <td>Streak freezes</td>
-          <td>${ME.streak.freezes}</td>
-        </tr>
-      ` : ""}
+
       <tr>
-        <td><b>Coins</b></td>
+        <td>Coins</td>
         <td><b>${ME.points}</b></td>
       </tr>
+
       <tr>
         <td>Saved drafts</td>
         <td>${draftCount}</td>
       </tr>
+
       <tr>
         <td>Orders</td>
-        <td>${(ME.orders || []).map((o) => esc(o.itemId)).join(", ") || "None"}</td>
+        <td>
+          ${(ME.orders || []).map((o) => esc(o.itemId)).join(", ") || "None"}
+        </td>
       </tr>
     </table>
-    ${ME.demoMode
-      ? '<p class="muted">Demo: <input id="dh" type="number" value="1" style="width:70px"> hours <button onclick="demoLog()">Log</button></p>'
-      : ""}
+
+    ${ME.demoMode ? `
+      <p class="muted">
+        Demo:
+        <input id="dh" type="number" value="1" style="width:70px">
+        hours
+        <button onclick="demoLog()">Log</button>
+      </p>
+    ` : ""}
+
+    <div class="actions">
+      <button onclick="logout()">Log out</button>
+    </div>
   `;
 }
 
@@ -274,10 +702,12 @@ async function demoLog() {
   await api("/api/demo/log-hours", "POST", {
     hours: Number($("dh").value)
   });
+
   await init();
 }
 
 // ---------- jam form ----------
+
 function jamForm(j, mine) {
   if (!ME) {
     return '<p class="muted">Log in to save a draft or submit.</p>';
@@ -286,9 +716,6 @@ function jamForm(j, mine) {
   if (!ME.hackatimeLinked) {
     return '<p class="muted">Connect Hackatime to track project hours.</p>';
   }
-
-  // Do not block draft saving when the user is marked "out".
-  // The server still enforces its rules when a final submission is attempted.
 
   const names = PROJECTS.map((p) => p.name);
 
@@ -314,8 +741,7 @@ function jamForm(j, mine) {
     ${isDraft ? `
       <div class="draft-note">
         <b>Private draft</b><br>
-        Your draft is only visible to you. Hours from the selected
-        Hackatime project count toward progress, but drafts earn no coins
+        Your draft is only visible to you. Drafts earn no coins
         until you successfully submit them.
       </div>
     ` : ""}
@@ -339,6 +765,7 @@ function jamForm(j, mine) {
       Screenshot (png, jpg or webp)
       ${mine?.screenshot ? " - leave empty to keep the current one" : ""}
     </label>
+
     <input type="file" id="shot"
       accept="image/png,image/jpeg,image/webp"
       onchange="pickShot(this)">
@@ -356,8 +783,7 @@ function jamForm(j, mine) {
     </select>
 
     <div class="muted">
-      Select only the Hackatime project you want this jam to track.
-      Only hours from this selected project count toward this jam.
+      Select the Hackatime project you want this jam to track.
       A final submission requires at least ${STATUS.minHours} hours.
     </div>
 
@@ -383,13 +809,14 @@ function jamForm(j, mine) {
     </div>
 
     <p class="muted">
-      Save a draft at any time. To publish your entry and earn coins,
-      complete the checklist, upload a screenshot, and reach the required hours.
+      Save a draft at any time. To publish your entry, complete the
+      checklist, upload a screenshot, and reach the required hours.
     </p>
   `;
 }
 
 // ---------- render jams ----------
+
 function renderJams() {
   const current = JAMS.filter((j) => j.state === "open");
 
@@ -399,6 +826,7 @@ function renderJams() {
         ? "The first jam starts " + fmtDate(STATUS.start) + "."
         : "All jams are finished."
     }</p>`;
+
     return;
   }
 
@@ -406,7 +834,11 @@ function renderJams() {
     const mine = ME?.submissions?.find((s) => s.week === j.week);
     const open = j.state === "open";
     const isDraft = mine?.status === "draft";
-    const tag = { open: "Open now", upcoming: "Not started", closed: "Closed" }[j.state];
+    const tag = {
+      open: "Open now",
+      upcoming: "Not started",
+      closed: "Closed"
+    }[j.state];
 
     return `
       <section class="${open ? "" : "locked"}">
@@ -442,7 +874,9 @@ function renderJams() {
                   ${esc(s.title)}
                 </a>
                 (<a href="${safeUrl(s.repo)}" target="_blank" rel="noopener noreferrer">code</a>)
+
                 <div class="muted">${esc(s.description)}</div>
+
                 ${s.screenshot
                   ? `<img class="thumb" src="${esc(s.screenshot)}" alt="Submission screenshot">`
                   : ""}
@@ -456,6 +890,7 @@ function renderJams() {
 }
 
 // ---------- screenshot upload ----------
+
 function pickShot(input) {
   const f = input.files[0];
   SHOT = null;
@@ -479,7 +914,6 @@ function pickShot(input) {
 
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
 
-    // Send a compact JPEG data URL to the server.
     SHOT = c.toDataURL("image/jpeg", 0.85);
 
     const pv = $("shotPreview");
@@ -498,6 +932,7 @@ function pickShot(input) {
 }
 
 // ---------- form payload ----------
+
 function getJamFormData() {
   const checklist = [...document.querySelectorAll(".ck:checked")]
     .map((c) => c.value);
@@ -514,6 +949,7 @@ function getJamFormData() {
 }
 
 // ---------- save draft ----------
+
 async function saveDraft(week) {
   try {
     const body = getJamFormData();
@@ -525,7 +961,7 @@ async function saveDraft(week) {
     alert(
       `Draft saved privately.\n\n` +
       `${r.hours} hours are recorded for your selected project.\n` +
-      `Drafts are not published and earn no coins until submitted.`
+      `Drafts earn no coins until submitted.`
     );
 
     await init();
@@ -535,6 +971,7 @@ async function saveDraft(week) {
 }
 
 // ---------- final submission ----------
+
 async function submitJam(week) {
   try {
     const body = getJamFormData();
@@ -556,6 +993,7 @@ async function submitJam(week) {
 }
 
 // ---------- store ----------
+
 async function loadStore() {
   ITEMS = await api("/api/store");
   renderStore();
@@ -615,6 +1053,7 @@ async function buyFreeze() {
 }
 
 // ---------- tabs ----------
+
 function showTab(name) {
   $("tab-jam").hidden = name !== "jam";
   $("tab-shop").hidden = name !== "shop";
@@ -626,6 +1065,7 @@ function showTab(name) {
 }
 
 // ---------- init ----------
+
 async function init() {
   try {
     STATUS = await api("/api/status");
@@ -657,7 +1097,9 @@ async function init() {
     renderStore();
     tick();
 
-    $("shopPoints").textContent = ME ? `${ME.points} coins` : "Log in to see";
+    $("shopPoints").textContent = ME
+      ? `${ME.points} coins`
+      : "Log in to see";
   } catch (e) {
     console.error("Could not load Docked:", e);
   }
