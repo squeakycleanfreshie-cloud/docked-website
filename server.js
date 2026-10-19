@@ -30,6 +30,7 @@ const {
   MIN_HOURS = 10,
   GOAL_HOURS = 500,
   OUT_MULTIPLIER = 1.3,
+  OWNER_GITHUB_IDS = "",
   UPLOAD_DIR = path.join(__dirname, "uploads"),
 } = process.env;
 
@@ -202,8 +203,20 @@ const isSubmitted = (s) => s.status !== "draft";
 
 const earned = (u) =>
   db.submissions
-    .filter((s) => s.userId === u.id && isSubmitted(s))
-    .reduce((n, s) => n + pointsFor(s.seconds || 0), 0);
+    .filter(
+      (s) =>
+        s.userId === u.id &&
+        isSubmitted(s) &&
+        (
+          s.reviewStatus === "approved" ||
+          !s.reviewStatus
+        )
+    )
+    .reduce(
+      (n, s) => n + pointsFor(s.seconds || 0),
+      0
+    );
+
 
 const hoursOf = (u) =>
   db.submissions
@@ -258,6 +271,43 @@ const needLogin = (req, res, next) =>
   me(req)
     ? next()
     : res.status(401).json({ error: "log in with GitHub first" });
+
+// ---------- owner-only access ----------
+const ownerIds = new Set(
+  String(OWNER_GITHUB_IDS)
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => /^\d+$/.test(id))
+);
+
+const needOwner = (req, res, next) => {
+  const user = me(req);
+
+  if (!user) {
+    return res.status(401).json({
+      error: "Log in with GitHub first.",
+    });
+  }
+
+  if (ownerIds.size === 0) {
+    return res.status(503).json({
+      error: "Owner access is not configured on the server.",
+    });
+  }
+
+  if (
+    user.githubId == null ||
+    !ownerIds.has(String(user.githubId))
+  ) {
+    return res.status(403).json({
+      error: "Owner access only.",
+    });
+  }
+
+  next();
+};
+
+
 
 const form = (o) => new URLSearchParams(o).toString();
 
@@ -726,7 +776,15 @@ app.get("/api/jams", (req, res) => {
       end: weekEnd(j.week).getTime(),
       state: jamState(j.week),
       submissions: db.submissions
-        .filter((s) => s.week === j.week && isSubmitted(s))
+        .filter(
+          (s) =>
+            s.week === j.week &&
+            isSubmitted(s) &&
+          (
+          s.reviewStatus === "approved" ||
+          !s.reviewStatus
+          )
+)
         .map((s) => ({
           by: displayName(db.users[s.userId]),
           title: s.title,
@@ -1061,11 +1119,16 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
       checklist: done,
       seconds,
       status: "submitted",
-      submittedAt: sub.submittedAt || new Date().toISOString(),
+      reviewStatus: "pending",
+      reviewReason: "",
+      reviewedAt: null,
+      reviewedBy: null,
+      submittedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
 
-    sub.points = pointsFor(sub.seconds);
+    // No coins until an owner approves this submission.
+    sub.points = 0;
 
     await save();
     liveCache.delete(u.id);
@@ -1217,7 +1280,225 @@ app.post("/api/store/redeem", needLogin, async (req, res) => {
 
   res.json({ ok: true, points: balance(u) });
 });
+// ---------- owner dashboard APIs ----------
 
+// Return review queue and prize fulfilment data.
+// Every route in this section is protected by needOwner.
+app.get("/api/owner/dashboard", needOwner, (req, res) => {
+  const submissions = db.submissions
+    .filter((s) => isSubmitted(s))
+    .map((s) => {
+      const user = db.users[s.userId] || {};
+      const jam = JAMS.find((j) => j.week === s.week);
+
+      return {
+        id: `${s.userId}:${s.week}`,
+        userId: s.userId,
+        week: s.week,
+        theme: jam?.theme || `Week ${s.week}`,
+        githubLogin: user.githubLogin || "unknown",
+        githubId: user.githubId == null
+          ? null
+          : String(user.githubId),
+        title: s.title || "Untitled project",
+        description: s.description || "",
+        screenshot: s.screenshot
+          ? `/uploads/${encodeURIComponent(s.screenshot)}`
+          : null,
+        url: s.url || "",
+        repo: s.repo || "",
+        project: s.project || "",
+        hours: +((Number(s.seconds) || 0) / 3600).toFixed(2),
+        checklist: CHECKLIST.map((item) => ({
+          key: item.key,
+          text: item.text,
+          checked: Array.isArray(s.checklist) &&
+            s.checklist.includes(item.key),
+        })),
+        reviewStatus: s.reviewStatus || "pending",
+        reviewReason: s.reviewReason || "",
+        submittedAt: s.submittedAt || s.updatedAt || null,
+        reviewedAt: s.reviewedAt || null,
+        reviewedBy: s.reviewedBy || null,
+      };
+    })
+    .sort((a, b) =>
+      (b.submittedAt || "").localeCompare(a.submittedAt || "")
+    );
+
+  const orders = db.orders.map((order, index) => {
+    const user = db.users[order.userId] || {};
+    const item = STORE.find((i) => i.id === order.itemId);
+
+    return {
+      id: order.id ||
+        `${order.userId}:${order.at}:${index}`,
+      githubLogin: user.githubLogin || "unknown",
+      itemId: order.itemId,
+      itemName: item?.name || order.itemId || "Unknown prize",
+      cost: Number(order.cost) || 0,
+      createdAt: order.at || null,
+      status: order.status || "pending",
+      shipping: order.shipping || {},
+      notes: order.notes || "",
+      updatedAt: order.updatedAt || null,
+      fulfilledAt: order.fulfilledAt || null,
+      fulfilledBy: order.fulfilledBy || null,
+    };
+  }).sort((a, b) =>
+    (b.createdAt || "").localeCompare(a.createdAt || "")
+  );
+
+  res.set("Cache-Control", "no-store");
+
+  res.json({
+    owner: {
+      githubLogin: me(req).githubLogin,
+      githubId: String(me(req).githubId),
+    },
+    stats: {
+      pending: submissions.filter(
+        (s) => s.reviewStatus === "pending"
+      ).length,
+      needsReview: submissions.filter(
+        (s) => s.reviewStatus === "needs_review"
+      ).length,
+      approved: submissions.filter(
+        (s) => s.reviewStatus === "approved"
+      ).length,
+      rejected: submissions.filter(
+        (s) => s.reviewStatus === "rejected"
+      ).length,
+      pendingPrizes: orders.filter(
+        (o) => o.status !== "fulfilled"
+      ).length,
+    },
+    submissions,
+    orders,
+  });
+});
+
+
+// Approve, reject, or flag a submission.
+app.patch(
+  "/api/owner/submissions/:userId/:week/review",
+  needOwner,
+  async (req, res) => {
+    const week = Number(req.params.week);
+    const status = String(req.body?.status || "");
+    const reason = String(req.body?.reason || "")
+      .trim()
+      .slice(0, 1000);
+
+    if (!["approved", "rejected", "needs_review"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid review status.",
+      });
+    }
+
+    if (status === "rejected" && !reason) {
+      return res.status(400).json({
+        error: "A rejection reason is required.",
+      });
+    }
+
+    const submission = db.submissions.find(
+      (s) =>
+        s.userId === req.params.userId &&
+        s.week === week &&
+        isSubmitted(s)
+    );
+
+    if (!submission) {
+      return res.status(404).json({
+        error: "Submitted project not found.",
+      });
+    }
+
+    submission.reviewStatus = status;
+    submission.reviewReason = reason;
+    submission.reviewedAt = new Date().toISOString();
+    submission.reviewedBy = String(me(req).githubId);
+    submission.points = status === "approved"
+      ? pointsFor(Number(submission.seconds) || 0)
+      : 0;
+    submission.updatedAt = new Date().toISOString();
+
+    await save();
+    liveCache.delete(submission.userId);
+
+    res.json({
+      ok: true,
+      reviewStatus: status,
+      points: status === "approved"
+        ? pointsFor(Number(submission.seconds) || 0)
+        : 0,
+    });
+  }
+);
+
+
+// Update shipping details and prize fulfilment status.
+app.patch(
+  "/api/owner/orders/:orderId/fulfilment",
+  needOwner,
+  async (req, res) => {
+    const order = db.orders.find((o, index) => {
+      const id = o.id ||
+        `${o.userId}:${o.at}:${index}`;
+
+      return id === req.params.orderId;
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        error: "Prize order not found.",
+      });
+    }
+
+    const status = String(
+      req.body?.status || order.status || "pending"
+    );
+
+    if (!["pending", "in_progress", "fulfilled"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid fulfilment status.",
+      });
+    }
+
+    const input = req.body?.shipping || {};
+    const clean = (value, max = 300) =>
+      String(value || "").trim().slice(0, max);
+
+    order.shipping = {
+      name: clean(input.name, 120),
+      email: clean(input.email, 200),
+      address: clean(input.address, 500),
+      contact: clean(input.contact, 200),
+    };
+
+    order.notes = clean(req.body?.notes, 2000);
+    order.status = status;
+    order.updatedAt = new Date().toISOString();
+
+    if (status === "fulfilled") {
+      order.fulfilledAt ||= new Date().toISOString();
+      order.fulfilledBy = String(me(req).githubId);
+    } else {
+      order.fulfilledAt = null;
+      order.fulfilledBy = null;
+    }
+
+    await save();
+
+    res.json({
+      ok: true,
+      status: order.status,
+      fulfilledAt: order.fulfilledAt,
+      fulfilledBy: order.fulfilledBy,
+    });
+  }
+);
 // ---------- current user ----------
 app.get("/api/me", async (req, res) => {
   const u = me(req);
