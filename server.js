@@ -60,13 +60,23 @@ const JAMS = [
 ].map((theme, i) => ({ week: i + 1, theme }));
 
 const STORE = [
-  { id: "freeze", name: "Streak freeze (covers 1 hour of a missed week)", cost: PPH, kind: "freeze" },
-  { id: "keycaps", name: "Custom keycap set", cost: 150 },
-  { id: "mousepad", name: "Desk mat", cost: 200 },
-  { id: "cable", name: "Braided USB-C cable", cost: 80 },
-  { id: "lamp", name: "Desk lamp", cost: 250 },
-  { id: "headphones", name: "Headphones", cost: 500 },
-  { id: "keyboard", name: "Mechanical keyboard", cost: 800 },
+  {
+    id: "freeze",
+    name: "Streak freeze (covers 1 hour of a missed week)",
+    cost: PPH,
+    kind: "freeze"
+  },
+  { id: "mario-kart-8-deluxe", name: "Mario Kart 8 Deluxe", cost: 120 },
+  { id: "super-mario-odyssey", name: "Super Mario Odyssey", cost: 120 },
+  { id: "zelda-breath-of-the-wild", name: "The Legend of Zelda: Breath of the Wild", cost: 120 },
+  { id: "animal-crossing-new-horizons", name: "Animal Crossing: New Horizons", cost: 120 },
+  { id: "super-smash-bros-ultimate", name: "Super Smash Bros. Ultimate", cost: 120 },
+  { id: "luigis-mansion-3", name: "Luigi's Mansion 3", cost: 120 },
+  { id: "pikmin-4", name: "Pikmin 4", cost: 120 },
+  { id: "kirby-and-the-forgotten-land", name: "Kirby and the Forgotten Land", cost: 120 },
+  { id: "super-mario-bros-wonder", name: "Super Mario Bros. Wonder", cost: 120 },
+  { id: "pokemon-scarlet", name: "Pokémon Scarlet", cost: 120 },
+  { id: "splatoon-3", name: "Splatoon 3", cost: 120 },
 ];
 
 // ---------- submission checklist ----------
