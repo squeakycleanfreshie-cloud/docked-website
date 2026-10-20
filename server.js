@@ -930,12 +930,12 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
     return res.status(403).json({ error: "this jam is not open for drafts" });
   }
 
-  if (!u.hackatimeId) {
+  if (!u.hackatimeId && !DEMO_ON) {
     return res.status(400).json({ error: "link Hackatime first" });
   }
 
   const body = req.body || {};
-  const project = String(body.project || "").trim();
+  const project = String(body.project || "").trim() || (DEMO_ON ? "demo-project" : "");
 
   if (!project) {
     return res.status(400).json({
@@ -945,7 +945,7 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
 
   if (
     db.submissions.some(
-      (s) => s.userId === u.id && s.week !== week && s.project === project
+      (s) => s.userId === u.id && s.week !== week && s.project === project && project !== "demo-project"
     )
   ) {
     return res.status(400).json({
@@ -966,19 +966,29 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
   }
 
   try {
-    const { projects, banned } = await htStats(
-      u.hackatimeId,
-      ...windowFor(week)
-    );
+    const demoSec = DEMO_ON ? (Number(u.demoHours?.[week]) || 0) * 3600 : 0;
+    let seconds = demoSec;
 
-    if (banned) {
-      return res.status(403).json({ error: "account flagged by Hackatime" });
-    }
+    if (!DEMO_ON) {
+      const { projects, banned } = await htStats(
+        u.hackatimeId,
+        ...windowFor(week)
+      );
 
-    if (!(project in projects)) {
-      return res.status(400).json({
-        error: "no time logged on that project this week yet",
-      });
+      if (banned) {
+        return res.status(403).json({ error: "account flagged by Hackatime" });
+      }
+
+      if (!(project in projects)) {
+        return res.status(400).json({
+          error: "no time logged on that project this week yet",
+        });
+      }
+
+      seconds = Number(projects[project]) || 0;
+    } else if (u.hackatimeId) {
+      const real = await htStats(u.hackatimeId, ...windowFor(week)).catch(() => null);
+      seconds = Math.max(demoSec, Number(real?.projects?.[project]) || 0);
     }
 
     let sub = existing;
@@ -1007,7 +1017,7 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
       repo: String(body.repo || "").trim().slice(0, 2000),
       project,
       checklist: Array.isArray(body.checklist) ? body.checklist : [],
-      seconds: Number(projects[project]) || 0,
+      seconds,
       status: "draft",
       points: 0,
       updatedAt: new Date().toISOString(),
@@ -1043,7 +1053,7 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
     });
   }
 
-  if (!u.hackatimeId) {
+  if (!u.hackatimeId && !DEMO_ON) {
     return res.status(400).json({ error: "link Hackatime first" });
   }
 
@@ -1064,10 +1074,12 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
     description,
     url,
     repo,
-    project,
+    project: rawProject,
     checklist,
     screenshot,
   } = req.body || {};
+
+  const project = rawProject || (DEMO_ON ? "demo-project" : "");
 
   const desc = String(description || "").trim();
 
@@ -1114,7 +1126,7 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
 
   if (
     db.submissions.some(
-      (s) => s.userId === u.id && s.week !== week && s.project === project
+      (s) => s.userId === u.id && s.week !== week && s.project === project && project !== "demo-project"
     )
   ) {
     return res.status(400).json({
@@ -1139,27 +1151,36 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   }
 
   try {
-    const { projects, banned } = await htStats(
-      u.hackatimeId,
-      ...windowFor(week)
-    );
+    // Demo mode skips the Hackatime project and 10-hour checks; demo hours still count.
+    const demoSec = DEMO_ON ? (Number(u.demoHours?.[week]) || 0) * 3600 : 0;
+    let seconds = demoSec;
 
-    if (banned) {
-      return res.status(403).json({ error: "account flagged by Hackatime" });
-    }
+    if (!DEMO_ON) {
+      const { projects, banned } = await htStats(
+        u.hackatimeId,
+        ...windowFor(week)
+      );
 
-    if (!(project in projects)) {
-      return res.status(400).json({
-        error: "no time logged on that project this week",
-      });
-    }
+      if (banned) {
+        return res.status(403).json({ error: "account flagged by Hackatime" });
+      }
 
-    const seconds = Number(projects[project]) || 0;
+      if (!(project in projects)) {
+        return res.status(400).json({
+          error: "no time logged on that project this week",
+        });
+      }
 
-    if (seconds < MINH * 3600) {
-      return res.status(400).json({
-        error: `need at least ${MINH} hours on that project this week (you have ${(seconds / 3600).toFixed(1)})`,
-      });
+      seconds = Number(projects[project]) || 0;
+
+      if (seconds < MINH * 3600) {
+        return res.status(400).json({
+          error: `need at least ${MINH} hours on that project this week (you have ${(seconds / 3600).toFixed(1)})`,
+        });
+      }
+    } else if (u.hackatimeId) {
+      const real = await htStats(u.hackatimeId, ...windowFor(week)).catch(() => null);
+      seconds = Math.max(demoSec, Number(real?.projects?.[project]) || 0);
     }
 
     if (!sub) {

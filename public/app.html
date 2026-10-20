@@ -874,7 +874,7 @@ function jamForm(j, mine) {
     return '<p class="muted">Log in to save a draft or submit.</p>';
   }
 
-  if (!ME.hackatimeLinked) {
+  if (!ME.hackatimeLinked && !ME.demoMode) {
     return '<p class="muted">Connect Hackatime to track project hours.</p>';
   }
 
@@ -884,7 +884,9 @@ function jamForm(j, mine) {
     names.unshift(mine.project);
   }
 
-  const opts = PROJECTS.length || mine
+  if (ME.demoMode && !names.includes("demo-project")) names.push("demo-project");
+
+  const opts = PROJECTS.length || mine || ME.demoMode
     ? names.map((n) => {
         const p = PROJECTS.find((x) => x.name === n);
 
