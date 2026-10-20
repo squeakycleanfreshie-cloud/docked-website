@@ -76,8 +76,8 @@ const STORE = [
   { id: "pikmin-4", name: "Pikmin 4", cost: 120, image: "https://img-eshop.cdn.nintendo.net/i/2abe1edbf62d989ab22f099cb64a0c514eb8bb0acbc5e1b8d393c1f882abc921.jpg" },
   { id: "kirby-and-the-forgotten-land", name: "Kirby and the Forgotten Land", cost: 120, image: "https://assets.nintendo.com/image/upload/c_fill,w_1200/q_auto:best/f_auto/dpr_2.0/store/software/switch2/70010000096829/0a06bf277f1eb585fcbb7ddeb4f70014fd1c860d326eb33c8accf4d4827ade72" },
   { id: "super-mario-bros-wonder", name: "Super Mario Bros. Wonder", cost: 120, image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQejjjRbC_L7iO2QufamSvxCqdpLN4bJ5zhJJcfSYVjBJHlyysMBz5OCODe&s=10" },
-  { id: "pokemon-scarlet", name: "Pokémon Scarlet", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
-  { id: "splatoon-3", name: "Splatoon 3", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "pokemon-scarlet", name: "Pokémon Scarlet", cost: 120, image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSvmA5lhUCCHOAXW5PjYB0Xcq88xPde_hjBpkc1IRNfoyG5SX4COcgUvqQ&s=10" },
+  { id: "splatoon-3", name: "Splatoon 3", cost: 120, image: "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRIS_p8w1IPYb78Kz4anV58HzoT6x6rSBHVWX90PSxyWA&s=10" },
 ];
 
 // ---------- submission checklist ----------
