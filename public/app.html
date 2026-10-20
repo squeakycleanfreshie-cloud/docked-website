@@ -16,7 +16,6 @@
   box-sizing: border-box;
 }
 
-
 body {
   font: 16px/1.5 system-ui, sans-serif;
   color: #1a1a1a;
@@ -24,152 +23,6 @@ body {
   margin: 0 auto;
   padding: 24px 20px 64px;
 }
-
-/* Top navigation */
-.site-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 22px;
-}
-
-.site-header h1 {
-  margin: 0;
-}
-
-.profile-wrap {
-  position: relative;
-}
-
-.profile-button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 12px;
-  border: 1px solid #ddd;
-  background: #fff;
-  border-radius: 4px;
-}
-
-.avatar {
-  width: 32px;
-  height: 32px;
-  display: inline-grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #c0272d;
-  color: white;
-  font-weight: bold;
-}
-
-.profile-menu {
-  position: absolute;
-  z-index: 10;
-  right: 0;
-  top: calc(100% + 8px);
-  width: min(330px, calc(100vw - 40px));
-  padding: 14px;
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  box-shadow: 0 8px 24px #00000012;
-}
-
-/* Main progress dashboard */
-.progress-panel {
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 22px;
-  margin: 20px 0 28px;
-  background: #fff;
-}
-
-.progress-panel h2 {
-  margin: 0 0 6px;
-  padding: 0;
-  border: 0;
-}
-
-.progress-row {
-  margin-top: 24px;
-}
-
-.progress-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 9px;
-}
-
-.progress-heading strong {
-  font-size: 17px;
-}
-
-.progress-heading span {
-  color: #666;
-  font-size: 14px;
-}
-
-progress.big-progress {
-  display: block;
-  width: 100%;
-  height: 25px;
-  border: 0;
-  border-radius: 3px;
-  overflow: hidden;
-  accent-color: #c0272d;
-}
-
-progress.big-progress::-webkit-progress-bar {
-  background: #f0f0f0;
-}
-
-progress.big-progress::-webkit-progress-value {
-  background: #c0272d;
-}
-
-progress.big-progress::-moz-progress-bar {
-  background: #c0272d;
-}
-
-.progress-foot {
-  display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 7px;
-  color: #777;
-  font-size: 13px;
-}
-
-.progress-empty {
-  padding: 14px;
-  border: 1px dashed #ddd;
-  color: #777;
-  font-size: 14px;
-}
-
-.profile-menu table {
-  font-size: 14px;
-}
-
-.profile-menu td {
-  padding: 8px 0;
-}
-
-@media (max-width: 500px) {
-  .progress-panel {
-    padding: 16px;
-  }
-
-  .profile-button {
-    padding: 5px 8px;
-  }
-}
-
 
 h1, h2, h3, h4, h5, h6 {
   font-family: "Nintendo DS BIOS", sans-serif;
@@ -574,42 +427,10 @@ progress.big-progress::-moz-progress-bar {
   font-size: 13px;
 }
 
-
-/* Shipped state */
-.shipped {
-  border: 2px solid #c0272d;
-  background: #fff5f5;
-  text-align: center;
-  padding: 28px 16px;
-  margin: 12px 0;
-}
-.shipped-title {
-  font-size: 34px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  color: #c0272d;
-}
-.shipped-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  background: rgba(192, 39, 45, 0.96);
-  color: #fff;
-  cursor: pointer;
-}
-.shipped-overlay .big {
-  font-size: clamp(40px, 12vw, 96px);
-  font-weight: 900;
-  letter-spacing: 2px;
-}
 </style>
 </head>
 
 <body>
-
 
 <header class="site-header">
   <h1>Docked</h1>
@@ -628,28 +449,6 @@ progress.big-progress::-moz-progress-bar {
 
     <div class="profile-menu" id="profileMenu" hidden>
       <div id="account">Loading...</div>
-    </div>
-  </div>
-</header>
-
-<div class="bar">
-  <span id="weekLabel" class="muted"></span>
-  <span id="countdown"></span>
-</div>
-
-<section class="progress-panel">
-  <h2>Your progress</h2>
-  <p class="muted" style="margin:0">
-    Keep building. Every hour gets you closer to the finish.
-  </p>
-
-  <div id="progressOverview">
-    <div class="progress-empty">
-      Loading your progress...
-    </div>
-  </div>
-</section>
-
     </div>
   </div>
 </header>
@@ -799,7 +598,6 @@ setInterval(tick, 1000);
 
 // ---------- account and progress ----------
 
-
 function renderAccount() {
   const menu = $("account");
 
@@ -818,7 +616,7 @@ function renderAccount() {
 
     $("progressOverview").innerHTML = `
       <div class="progress-empty">
-        Log in with GitHub to see your progress.
+        Log in with GitHub to see your overall and weekly progress.
       </div>
     `;
 
@@ -826,19 +624,24 @@ function renderAccount() {
   }
 
   const name = ME.name || ME.githubLogin || "Account";
-  const drafts = (ME.submissions || []).filter(
-    s => s.status === "draft"
+
+  const avatar = ME.avatarUrl || "";
+
+  const draftCount = (ME.submissions || []).filter(
+    (s) => s.status === "draft"
   ).length;
 
-  const goal = Number(ME.goalHours) || 500;
+  const goal = Number(ME.goalHours) || 100;
   const hours = Number(ME.hours) || 0;
   const percent = Math.min(100, Math.round(hours / goal * 100));
 
   $("profileLabel").textContent = name;
-  $("profileAvatar").textContent =
-    name.trim().charAt(0).toUpperCase() || "?";
+  $("profileAvatar").innerHTML = avatar
+    ? `<img src="${/^\/uploads\//.test(avatar) ? esc(avatar) : safeUrl(avatar)}" alt="Profile picture">`
+    : esc(name.trim().charAt(0).toUpperCase() || "?");
 
-  // Main progress display
+  // Large progress bars are the main focus of the dashboard.
+
   $("progressOverview").innerHTML = `
     <div class="progress-row">
       <div class="progress-heading">
@@ -880,7 +683,7 @@ function renderAccount() {
         <div class="progress-foot">
           <span>
             ${ME.streak.out
-              ? `Log ${ME.streak.remaining} more hours to get back in`
+              ? `Out — log ${ME.streak.remaining} more hours to get back in`
               : "Keep up the good work!"}
           </span>
           <span>${ME.streak.freezes} streak freezes</span>
@@ -889,8 +692,33 @@ function renderAccount() {
     ` : ""}
   `;
 
-  // Account details live in the top-right profile menu
+  // Account settings are now in the profile dropdown.
+
   menu.innerHTML = `
+
+    <div class="profile-settings">
+      <b>Profile settings</b>
+
+      <label class="f" for="profileName">Display name</label>
+      <input
+        class="w"
+        id="profileName"
+        maxlength="24"
+        value="${esc(name)}"
+      >
+
+      <label class="f" for="profilePicture">Profile picture</label>
+      <input
+        id="profilePicture"
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+      >
+
+      <p class="muted">PNG, JPG or WebP. Your name and picture are saved to your account.</p>
+
+      <button class="primary" onclick="saveProfile()">Save profile</button>
+    </div>
+
     <table>
       <tr>
         <td>Signed in as</td>
@@ -917,13 +745,13 @@ function renderAccount() {
 
       <tr>
         <td>Saved drafts</td>
-        <td>${drafts}</td>
+        <td>${draftCount}</td>
       </tr>
 
       <tr>
         <td>Orders</td>
         <td>
-          ${(ME.orders || []).map(o => esc(o.itemId)).join(", ") || "None"}
+          ${(ME.orders || []).map((o) => esc(o.itemId)).join(", ") || "None"}
         </td>
       </tr>
     </table>
@@ -943,27 +771,45 @@ function renderAccount() {
   `;
 }
 
-function toggleProfile() {
-  const menu = $("profileMenu");
-  const open = menu.hidden;
 
-  menu.hidden = !open;
+let PROFILE_PICTURE = null;
 
-  $("profileButton").setAttribute(
-    "aria-expanded",
-    String(open)
-  );
-}
+$("profileMenu").addEventListener("change", async (event) => {
+  if (event.target.id !== "profilePicture") return;
 
-document.addEventListener("click", event => {
-  if (!event.target.closest(".profile-wrap")) {
-    $("profileMenu").hidden = true;
+  const file = event.target.files?.[0];
+  PROFILE_PICTURE = null;
 
-    $("profileButton").setAttribute(
-      "aria-expanded",
-      "false"
-    );
+  if (!file) return;
+
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    alert("Please choose a PNG, JPG or WebP image.");
+    event.target.value = "";
+    return;
   }
+
+  const img = new Image();
+  const objectUrl = URL.createObjectURL(file);
+
+  img.onload = () => {
+    const scale = Math.min(1, 500 / img.width, 500 / img.height);
+    const canvas = document.createElement("canvas");
+
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    PROFILE_PICTURE = canvas.toDataURL("image/jpeg", 0.82);
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  img.onerror = () => {
+    alert("Couldn't read that image.");
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  img.src = objectUrl;
 });
 
 async function saveProfile() {
@@ -1151,19 +997,6 @@ function renderJams() {
     const mine = ME?.submissions?.find((s) => s.week === j.week);
     const open = j.state === "open";
     const isDraft = mine?.status === "draft";
-    const rejected = mine?.reviewStatus === "rejected" && !isDraft;
-    const permRejected = mine?.reviewStatus === "perm_rejected" && !isDraft;
-    const shipped = !!mine && !isDraft && !rejected;
-    const statusLabel = {
-      pending: "In review",
-      needs_review: "In review",
-      approved: "Approved",
-      rejected: "Rejected: needs changes",
-      perm_rejected: "Permanently rejected"
-    }[mine?.reviewStatus || "pending"] || "In review";
-    const hoursText = mine?.hoursAdjusted
-      ? `${mine.hours}h (lowered from ${mine.claimedHours}h by a reviewer)`
-      : `${mine?.hours || 0}h`;
     const tag = {
       open: "Open now",
       upcoming: "Not started",
@@ -1181,34 +1014,18 @@ function renderJams() {
           ${fmtDate(j.start)} to ${fmtDate(j.end)}
         </div>
 
-        ${shipped ? `
-          <div class="shipped">
-            <div class="shipped-title">${permRejected ? "PROJECT REJECTED" : "PROJECT SHIPPED!"}</div>
-            <p><b>${esc(mine.title || "Untitled project")}</b> · ${hoursText}</p>
-            <p><b>Status: ${statusLabel}</b></p>
-            <p class="muted">
-              ${mine.reviewStatus === "approved"
-                ? `${mine.points || 0} coins earned.`
-                : permRejected
-                  ? "This project can't be resubmitted."
-                  : "Coins arrive once it is approved."}
-              ${mine.reviewReason ? `<br>Reviewer note: ${esc(mine.reviewReason)}` : ""}
-            </p>
-            <p class="muted">The form for week ${j.week} is closed.${permRejected ? "" : " Come back next week for the next theme."}</p>
+        ${mine ? `
+          <div class="draft-note">
+            <b>${isDraft ? "Draft saved — private" : "Submission saved"}</b><br>
+            ${esc(mine.title || "Untitled project")}<br>
+            Selected project hours: ${mine.hours || 0}h<br>
+            ${isDraft
+              ? "Coins earned from this draft: 0. It is not published."
+              : `Coins earned for this entry: ${mine.points || 0}`}
           </div>
-        ` : `
-          ${mine ? `
-            <div class="draft-note">
-              <b>${isDraft ? "Draft saved — private" : "Rejected: needs changes"}</b><br>
-              ${esc(mine.title || "Untitled project")}<br>
-              Selected project hours: ${mine.hours || 0}h<br>
-              ${isDraft
-                ? "Coins earned from this draft: 0. It is not published."
-                : `${esc(mine.reviewReason || "Please update your project and submit again.")}`}
-            </div>
-          ` : ""}
-          ${open ? jamForm(j, mine) : ""}
-        `}
+        ` : ""}
+
+        ${open ? jamForm(j, mine) : ""}
 
         ${j.submissions?.length ? `
           <h3>Published submissions</h3>
@@ -1318,16 +1135,6 @@ async function saveDraft(week) {
 
 // ---------- final submission ----------
 
-function showShipped(hours) {
-  const el = document.createElement("div");
-
-  el.className = "shipped-overlay";
-  el.innerHTML = `<div><div class="big">PROJECT SHIPPED!</div><p>${Number(hours) || 0} hours counted</p></div>`;
-  el.onclick = () => el.remove();
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3000);
-}
-
 async function submitJam(week) {
   try {
     const body = getJamFormData();
@@ -1336,8 +1143,13 @@ async function submitJam(week) {
 
     SHOT = null;
 
+    alert(
+      `Submission saved!\n\n` +
+      `${r.hours} hours counted.\n` +
+      `Your current coin balance is ${r.points}.`
+    );
+
     await init();
-    showShipped(r.hours);
   } catch (e) {
     console.error("Could not submit jam:", e);
   }
