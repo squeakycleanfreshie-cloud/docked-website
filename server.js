@@ -140,15 +140,6 @@ async function initDatabase() {
   }
 
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS docked_files (
-      name text PRIMARY KEY,
-      mime text NOT NULL,
-      data bytea NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now()
-    )
-  `);
-
-  await pool.query(`
     CREATE TABLE IF NOT EXISTS docked_app_state (
       id smallint PRIMARY KEY CHECK (id = 1),
       state jsonb NOT NULL,
@@ -191,21 +182,6 @@ async function initDatabase() {
   console.log("Docked database loaded from Supabase PostgreSQL");
 }
 
-// Images live in Postgres, not on Render's disk (which is wiped on every restart/redeploy).
-const MIME = { png: "image/png", jpg: "image/jpeg", webp: "image/webp" };
-
-async function putFile(name, img) {
-  await pool.query(
-    `INSERT INTO docked_files (name, mime, data) VALUES ($1, $2, $3)
-     ON CONFLICT (name) DO UPDATE SET mime = EXCLUDED.mime, data = EXCLUDED.data`,
-    [name, MIME[img.ext], img.buf]
-  );
-}
-
-function deleteFile(name) {
-  pool.query("DELETE FROM docked_files WHERE name = $1", [String(name)]).catch(() => {});
-}
-
 function save() {
   const snapshot = JSON.stringify(db);
 
@@ -224,12 +200,6 @@ function save() {
 
 const isSubmitted = (s) => s.status !== "draft";
 
-// Hours a reviewer has credited. A reviewer can only lower hours, never raise them above Hackatime's.
-const effSeconds = (s) => {
-  const real = Number(s.seconds) || 0;
-  return s.adjustedSeconds == null ? real : Math.min(real, Number(s.adjustedSeconds) || 0);
-};
-
 
 
 const earned = (u) =>
@@ -244,7 +214,7 @@ const earned = (u) =>
         )
     )
     .reduce(
-      (n, s) => n + pointsFor(effSeconds(s)),
+      (n, s) => n + pointsFor(s.seconds || 0),
       0
     );
 
@@ -252,7 +222,7 @@ const earned = (u) =>
 const hoursOf = (u) =>
   db.submissions
     .filter((s) => s.userId === u.id)
-    .reduce((n, s) => n + effSeconds(s), 0) / 3600;
+    .reduce((n, s) => n + (s.seconds || 0), 0) / 3600;
 
 const balance = (u) =>
   earned(u) + (u.demoPoints || 0) - (u.spentPoints || 0);
@@ -758,12 +728,7 @@ async function streakInfo(u, fresh = false) {
     weekHours: +weekHours.toFixed(2),
     weekTarget: MINH,
     freezes: u.freezes || 0,
-    totalHours: +Math.max(
-      0,
-      settledHours + weekHours - db.submissions
-        .filter((x) => x.userId === u.id && x.adjustedSeconds != null)
-        .reduce((a, x) => a + Math.max(0, (Number(x.seconds) || 0) - effSeconds(x)) / 3600, 0)
-    ).toFixed(2),
+    totalHours: +(settledHours + weekHours).toFixed(2),
   };
 }
 
@@ -931,10 +896,10 @@ app.post("/api/profile", needLogin, async (req, res) => {
 
     const filename = `${crypto.randomUUID()}.${img.ext}`;
 
-    await putFile(filename, img);
+    fs.writeFileSync(path.join(UPLOAD_DIR, filename), img.buf);
 
     if (u.avatarFile) {
-      deleteFile(u.avatarFile);
+      fs.unlink(path.join(UPLOAD_DIR, u.avatarFile), () => {});
     }
 
     u.avatarFile = filename;
@@ -963,16 +928,6 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
 
   if (jamState(week) !== "open") {
     return res.status(403).json({ error: "this jam is not open for drafts" });
-  }
-
-  const shippedAlready = db.submissions.find(
-    (s) => s.week === week && s.userId === u.id
-  );
-
-  if (shippedAlready && isSubmitted(shippedAlready) && shippedAlready.reviewStatus !== "rejected") {
-    return res.status(403).json({
-      error: "You already shipped this week's project. This jam is closed for you.",
-    });
   }
 
   if (!u.hackatimeId && !DEMO_ON) {
@@ -1046,10 +1001,10 @@ app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
     if (img) {
       const name = `${crypto.randomUUID()}.${img.ext}`;
 
-      await putFile(name, img);
+      fs.writeFileSync(path.join(UPLOAD_DIR, name), img.buf);
 
       if (sub.screenshot) {
-        deleteFile(sub.screenshot);
+        fs.unlink(path.join(UPLOAD_DIR, sub.screenshot), () => {});
       }
 
       sub.screenshot = name;
@@ -1095,16 +1050,6 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
   if (jamState(week) !== "open") {
     return res.status(403).json({
       error: "this jam is not open for submissions",
-    });
-  }
-
-  const shippedAlready = db.submissions.find(
-    (s) => s.week === week && s.userId === u.id
-  );
-
-  if (shippedAlready && isSubmitted(shippedAlready) && shippedAlready.reviewStatus !== "rejected") {
-    return res.status(403).json({
-      error: "You already shipped this week's project. This jam is closed for you.",
     });
   }
 
@@ -1246,10 +1191,10 @@ app.post("/api/jams/:week/submit", needLogin, async (req, res) => {
     if (img) {
       const name = `${crypto.randomUUID()}.${img.ext}`;
 
-      await putFile(name, img);
+      fs.writeFileSync(path.join(UPLOAD_DIR, name), img.buf);
 
       if (sub.screenshot) {
-        deleteFile(sub.screenshot);
+        fs.unlink(path.join(UPLOAD_DIR, sub.screenshot), () => {});
       }
 
       sub.screenshot = name;
@@ -1315,7 +1260,7 @@ app.post("/api/sync", needLogin, async (req, res) => {
 
       if (sub.project in projects) {
         sub.seconds = Number(projects[sub.project]) || 0;
-        sub.points = isSubmitted(sub) ? pointsFor(effSeconds(sub)) : 0;
+        sub.points = isSubmitted(sub) ? pointsFor(sub.seconds) : 0;
       }
     }
 
@@ -1465,9 +1410,7 @@ app.get("/api/owner/dashboard", needOwner, (req, res) => {
         url: s.url || "",
         repo: s.repo || "",
         project: s.project || "",
-        hours: +(effSeconds(s) / 3600).toFixed(2),
-        claimedHours: +((Number(s.seconds) || 0) / 3600).toFixed(2),
-        adjusted: s.adjustedSeconds != null && effSeconds(s) < (Number(s.seconds) || 0),
+        hours: +((Number(s.seconds) || 0) / 3600).toFixed(2),
         checklist: CHECKLIST.map((item) => ({
           key: item.key,
           text: item.text,
@@ -1528,9 +1471,6 @@ app.get("/api/owner/dashboard", needOwner, (req, res) => {
       rejected: submissions.filter(
         (s) => s.reviewStatus === "rejected"
       ).length,
-      permRejected: submissions.filter(
-        (s) => s.reviewStatus === "perm_rejected"
-      ).length,
       pendingPrizes: orders.filter(
         (o) => o.status !== "fulfilled"
       ).length,
@@ -1541,27 +1481,27 @@ app.get("/api/owner/dashboard", needOwner, (req, res) => {
 });
 
 
-// Approve, reject (needs changes), permanently reject, flag, and/or lower the credited hours.
+// Approve, reject, or flag a submission.
 app.patch(
   "/api/owner/submissions/:userId/:week/review",
   needOwner,
   async (req, res) => {
     const week = Number(req.params.week);
-    const hasStatus = req.body?.status !== undefined && req.body.status !== "";
-    const status = hasStatus ? String(req.body.status) : null;
-    const reason = String(req.body?.reason || "").trim().slice(0, 1000);
-    const hasHours = req.body?.hours !== undefined;
+    const status = String(req.body?.status || "");
+    const reason = String(req.body?.reason || "")
+      .trim()
+      .slice(0, 1000);
 
-    if (hasStatus && !["approved", "rejected", "perm_rejected", "needs_review"].includes(status)) {
-      return res.status(400).json({ error: "Invalid review status." });
+    if (!["approved", "rejected", "needs_review"].includes(status)) {
+      return res.status(400).json({
+        error: "Invalid review status.",
+      });
     }
 
-    if (!hasStatus && !hasHours) {
-      return res.status(400).json({ error: "Nothing to update." });
-    }
-
-    if ((status === "rejected" || status === "perm_rejected") && !reason) {
-      return res.status(400).json({ error: "A rejection reason is required." });
+    if (status === "rejected" && !reason) {
+      return res.status(400).json({
+        error: "A rejection reason is required.",
+      });
     }
 
     const submission = db.submissions.find(
@@ -1572,54 +1512,17 @@ app.patch(
     );
 
     if (!submission) {
-      return res.status(404).json({ error: "Submitted project not found." });
+      return res.status(404).json({
+        error: "Submitted project not found.",
+      });
     }
 
-    if (hasHours) {
-      const claimed = Number(submission.seconds) || 0;
-
-      if (req.body.hours === null || req.body.hours === "") {
-        delete submission.adjustedSeconds;
-      } else {
-        const h = Number(req.body.hours);
-
-        if (!Number.isFinite(h) || h < 0) {
-          return res.status(400).json({ error: "Hours must be 0 or more." });
-        }
-
-        if (h * 3600 > claimed + 1) {
-          return res.status(400).json({
-            error: `Hours can only be lowered (Hackatime shows ${(claimed / 3600).toFixed(2)}h).`,
-          });
-        }
-
-        const newSec = Math.round(h * 3600);
-
-        if (newSec < claimed - 1) {
-          if (!reason) {
-            return res.status(400).json({ error: "Add a reason when lowering hours." });
-          }
-
-          submission.adjustedSeconds = newSec;
-        } else {
-          delete submission.adjustedSeconds;
-        }
-      }
-    }
-
-    if (hasStatus) {
-      submission.reviewStatus = status;
-      submission.reviewReason = reason;
-      submission.reviewedAt = new Date().toISOString();
-      submission.reviewedBy = String(me(req).githubId);
-    } else if (reason) {
-      submission.reviewReason = reason;
-      submission.reviewedAt = new Date().toISOString();
-      submission.reviewedBy = String(me(req).githubId);
-    }
-
-    submission.points = submission.reviewStatus === "approved"
-      ? pointsFor(effSeconds(submission))
+    submission.reviewStatus = status;
+    submission.reviewReason = reason;
+    submission.reviewedAt = new Date().toISOString();
+    submission.reviewedBy = String(me(req).githubId);
+    submission.points = status === "approved"
+      ? pointsFor(Number(submission.seconds) || 0)
       : 0;
     submission.updatedAt = new Date().toISOString();
 
@@ -1628,9 +1531,10 @@ app.patch(
 
     res.json({
       ok: true,
-      reviewStatus: submission.reviewStatus || "pending",
-      hours: +(effSeconds(submission) / 3600).toFixed(2),
-      points: submission.points,
+      reviewStatus: status,
+      points: status === "approved"
+        ? pointsFor(Number(submission.seconds) || 0)
+        : 0,
     });
   }
 );
@@ -1720,9 +1624,6 @@ app.get("/api/me", async (req, res) => {
       .filter((s) => s.userId === u.id)
       .map((s) => ({
         week: s.week,
-        status: s.status || "submitted",
-        reviewStatus: s.reviewStatus || "pending",
-        reviewReason: s.reviewReason || "",
         title: s.title,
         url: s.url,
         repo: s.repo,
@@ -1730,9 +1631,7 @@ app.get("/api/me", async (req, res) => {
         screenshot: s.screenshot ? `/uploads/${s.screenshot}` : null,
         project: s.project,
         checklist: s.checklist,
-        hours: +(effSeconds(s) / 3600).toFixed(2),
-        claimedHours: +((s.seconds || 0) / 3600).toFixed(2),
-        hoursAdjusted: s.adjustedSeconds != null && effSeconds(s) < (Number(s.seconds) || 0),
+        hours: +((s.seconds || 0) / 3600).toFixed(2),
         points: s.points || 0,
       })),
 
@@ -1745,22 +1644,12 @@ app.post("/auth/logout", (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
-app.get("/uploads/:name", async (req, res) => {
-  const name = path.basename(String(req.params.name));
-
-  if (!/^[0-9a-f-]{36}\.(png|jpg|webp)$/.test(name)) return res.status(404).end();
-
-  const r = await pool.query("SELECT mime, data FROM docked_files WHERE name = $1", [name]);
-
-  if (!r.rows.length) return res.status(404).end();
-
-  res.set({
-    "Content-Type": r.rows[0].mime,
-    "Cache-Control": "public, max-age=31536000, immutable", // file names are random and never reused
-    "X-Content-Type-Options": "nosniff",
-  });
-  res.send(r.rows[0].data);
-});
+app.use(
+  "/uploads",
+  express.static(UPLOAD_DIR, {
+    setHeaders: (r) => r.set("X-Content-Type-Options", "nosniff"),
+  })
+);
 
 app.use(express.static(path.join(__dirname, "public")));
 
