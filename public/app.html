@@ -367,6 +367,66 @@ progress.big-progress::-moz-progress-bar {
     font-size: 42px;
   }
 }
+
+
+/* Profile picture */
+.avatar {
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/* Shop image cards */
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.shop-card {
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.shop-card img {
+  width: 100%;
+  height: 150px;
+  display: block;
+  object-fit: cover;
+  background: #f5f5f5;
+}
+
+.shop-card-content {
+  padding: 12px;
+}
+
+.shop-card-content h3 {
+  min-height: 44px;
+}
+
+.shop-card-content .actions {
+  margin-top: 12px;
+}
+
+.profile-settings {
+  border-bottom: 1px solid #eee;
+  padding-bottom: 14px;
+  margin-bottom: 12px;
+}
+
+.profile-settings input[type="file"] {
+  width: 100%;
+  font-size: 13px;
+}
+
 </style>
 </head>
 
@@ -564,6 +624,8 @@ function renderAccount() {
 
   const name = ME.name || ME.githubLogin || "Account";
 
+  const avatar = ME.avatarUrl || "";
+
   const draftCount = (ME.submissions || []).filter(
     (s) => s.status === "draft"
   ).length;
@@ -573,8 +635,9 @@ function renderAccount() {
   const percent = Math.min(100, Math.round(hours / goal * 100));
 
   $("profileLabel").textContent = name;
-  $("profileAvatar").textContent =
-    name.trim().charAt(0).toUpperCase() || "?";
+  $("profileAvatar").innerHTML = avatar
+    ? `<img src="${safeUrl(avatar)}" alt="Profile picture">`
+    : esc(name.trim().charAt(0).toUpperCase() || "?");
 
   // Large progress bars are the main focus of the dashboard.
 
@@ -631,6 +694,30 @@ function renderAccount() {
   // Account settings are now in the profile dropdown.
 
   menu.innerHTML = `
+
+    <div class="profile-settings">
+      <b>Profile settings</b>
+
+      <label class="f" for="profileName">Display name</label>
+      <input
+        class="w"
+        id="profileName"
+        maxlength="24"
+        value="${esc(name)}"
+      >
+
+      <label class="f" for="profilePicture">Profile picture</label>
+      <input
+        id="profilePicture"
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+      >
+
+      <p class="muted">PNG, JPG or WebP. Your name and picture are saved to your account.</p>
+
+      <button class="primary" onclick="saveProfile()">Save profile</button>
+    </div>
+
     <table>
       <tr>
         <td>Signed in as</td>
@@ -682,6 +769,79 @@ function renderAccount() {
     </div>
   `;
 }
+
+
+let PROFILE_PICTURE = null;
+
+$("profileMenu").addEventListener("change", async (event) => {
+  if (event.target.id !== "profilePicture") return;
+
+  const file = event.target.files?.[0];
+  PROFILE_PICTURE = null;
+
+  if (!file) return;
+
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+    alert("Please choose a PNG, JPG or WebP image.");
+    event.target.value = "";
+    return;
+  }
+
+  const img = new Image();
+  const objectUrl = URL.createObjectURL(file);
+
+  img.onload = () => {
+    const scale = Math.min(1, 500 / img.width, 500 / img.height);
+    const canvas = document.createElement("canvas");
+
+    canvas.width = Math.round(img.width * scale);
+    canvas.height = Math.round(img.height * scale);
+
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    PROFILE_PICTURE = canvas.toDataURL("image/jpeg", 0.82);
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  img.onerror = () => {
+    alert("Couldn't read that image.");
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  img.src = objectUrl;
+});
+
+async function saveProfile() {
+  try {
+    const name = $("profileName").value.trim();
+
+    if (!name || name.length > 24) {
+      alert("Your display name must be 1–24 characters.");
+      return;
+    }
+
+    if ($("profilePicture").files.length && !PROFILE_PICTURE) {
+      alert("Your picture is still loading. Please try again in a moment.");
+      return;
+    }
+
+    await api("/api/profile", "POST", {
+      name,
+      avatar: PROFILE_PICTURE
+    });
+
+    PROFILE_PICTURE = null;
+    await init();
+
+    $("profileMenu").hidden = false;
+    $("profileButton").setAttribute("aria-expanded", "true");
+
+    alert("Profile saved!");
+  } catch (error) {
+    console.error("Could not save profile:", error);
+  }
+}
+
 
 async function logout() {
   await api("/auth/logout", "POST");
@@ -999,6 +1159,7 @@ async function loadStore() {
   renderStore();
 }
 
+
 function renderStore() {
   const out = ME?.streak?.out;
 
@@ -1008,34 +1169,66 @@ function renderStore() {
           ME.streak.remaining
         } more hours. Streak freezes are still available.</p>`
       : "") +
-    `<table>${
-      ITEMS.map((i) => i.kind === "freeze"
-        ? `<tr>
-            <td>
-              ${esc(i.name)}
-              <div class="muted">
-                ${i.cost} pts each. A freeze adds 1 hour to a week
-                you fall short, so you stay in or owe less.
+    `<div class="shop-grid">${
+      ITEMS.map((i) => {
+        const image = i.image ||
+          `https://placehold.co/500x300?text=${encodeURIComponent(i.name)}`;
+
+        if (i.kind === "freeze") {
+          return `
+            <section class="shop-card">
+              <img
+                src="${esc(image)}"
+                alt="${esc(i.name)}"
+                loading="lazy"
+              >
+              <div class="shop-card-content">
+                <h3>${esc(i.name)}</h3>
+                <p class="muted">
+                  ${i.cost} coins each. A freeze adds one hour
+                  to a week you fall short.
+                </p>
+                <input
+                  id="fq"
+                  type="number"
+                  min="1"
+                  max="50"
+                  value="1"
+                  style="width:70px"
+                  aria-label="Number of streak freezes"
+                >
+                <button onclick="buyFreeze()">Buy</button>
               </div>
-            </td>
-            <td>
-              <input id="fq" type="number" min="1" max="50"
-                value="1" style="width:60px">
-              <button onclick="buyFreeze()">Buy</button>
-            </td>
-          </tr>`
-        : `<tr>
-            <td>${esc(i.name)}</td>
-            <td>
-              ${i.cost} pts
-              <button onclick="redeem('${esc(i.id)}')" ${out ? "disabled" : ""}>
-                Redeem
-              </button>
-            </td>
-          </tr>`
-      ).join("")
-    }</table>`;
+            </section>`;
+        }
+
+        return `
+          <section class="shop-card">
+            <img
+              src="${esc(image)}"
+              alt="${esc(i.name)}"
+              loading="lazy"
+            >
+            <div class="shop-card-content">
+              <h3>${esc(i.name)}</h3>
+              <div class="bar">
+                <b>${i.cost} coins</b>
+              </div>
+              <div class="actions">
+                <button
+                  class="primary"
+                  onclick="redeem('${esc(i.id)}')"
+                  ${out ? "disabled" : ""}
+                >
+                  Redeem
+                </button>
+              </div>
+            </div>
+          </section>`;
+      }).join("")
+    }</div>`;
 }
+
 
 async function redeem(id) {
   await api("/api/store/redeem", "POST", { itemId: id });

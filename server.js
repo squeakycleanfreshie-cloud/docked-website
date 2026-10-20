@@ -67,17 +67,17 @@ const STORE = [
     cost: PPH,
     kind: "freeze"
   },
-  { id: "mario-kart-8-deluxe", name: "Mario Kart 8 Deluxe", cost: 120 },
-  { id: "super-mario-odyssey", name: "Super Mario Odyssey", cost: 120 },
-  { id: "zelda-breath-of-the-wild", name: "The Legend of Zelda: Breath of the Wild", cost: 120 },
-  { id: "animal-crossing-new-horizons", name: "Animal Crossing: New Horizons", cost: 120 },
-  { id: "super-smash-bros-ultimate", name: "Super Smash Bros. Ultimate", cost: 120 },
-  { id: "luigis-mansion-3", name: "Luigi's Mansion 3", cost: 120 },
-  { id: "pikmin-4", name: "Pikmin 4", cost: 120 },
-  { id: "kirby-and-the-forgotten-land", name: "Kirby and the Forgotten Land", cost: 120 },
-  { id: "super-mario-bros-wonder", name: "Super Mario Bros. Wonder", cost: 120 },
-  { id: "pokemon-scarlet", name: "Pokémon Scarlet", cost: 120 },
-  { id: "splatoon-3", name: "Splatoon 3", cost: 120 },
+  { id: "mario-kart-8-deluxe", name: "Mario Kart 8 Deluxe", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "super-mario-odyssey", name: "Super Mario Odyssey", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "zelda-breath-of-the-wild", name: "The Legend of Zelda: Breath of the Wild", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe"},
+  { id: "animal-crossing-new-horizons", name: "Animal Crossing: New Horizons", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "super-smash-bros-ultimate", name: "Super Smash Bros. Ultimate", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "luigis-mansion-3", name: "Luigi's Mansion 3", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "pikmin-4", name: "Pikmin 4", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "kirby-and-the-forgotten-land", name: "Kirby and the Forgotten Land", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "super-mario-bros-wonder", name: "Super Mario Bros. Wonder", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "pokemon-scarlet", name: "Pokémon Scarlet", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
+  { id: "splatoon-3", name: "Splatoon 3", cost: 120, image: "https://placehold.co/500x300?text=Mario+Kart+8+Deluxe" },
 ];
 
 // ---------- submission checklist ----------
@@ -251,7 +251,7 @@ app.use(session({
 const me = (req) => db.users[req.session.uid];
 
 const displayName = (u) =>
-  (u && (u.githubLogin || u.hcaName)) || "user";
+  (u && (u.customName || u.githubLogin || u.hcaName)) || "user";
 
 const newUser = (f) => {
   const u = {
@@ -847,6 +847,51 @@ function parseImage(dataUrl) {
     ? { buf, ext: m[1] === "jpeg" ? "jpg" : m[1] }
     : null;
 }
+
+
+app.post("/api/profile", needLogin, async (req, res) => {
+  const u = me(req);
+  const name = String(req.body?.name || "").trim();
+
+  if (!name || name.length > 24) {
+    return res.status(400).json({
+      error: "Name must be between 1 and 24 characters."
+    });
+  }
+
+  u.customName = name;
+
+  if (req.body?.avatar) {
+    const img = parseImage(req.body.avatar);
+
+    if (!img) {
+      return res.status(400).json({
+        error: "Use a PNG, JPG or WebP image under 3MB."
+      });
+    }
+
+    const filename = `${crypto.randomUUID()}.${img.ext}`;
+
+    fs.writeFileSync(path.join(UPLOAD_DIR, filename), img.buf);
+
+    if (u.avatarFile) {
+      fs.unlink(path.join(UPLOAD_DIR, u.avatarFile), () => {});
+    }
+
+    u.avatarFile = filename;
+  }
+
+  await save();
+
+  res.json({
+    ok: true,
+    name: u.customName,
+    avatarUrl: u.avatarFile
+      ? `/uploads/${encodeURIComponent(u.avatarFile)}`
+      : null
+  });
+});
+
 // Save a private draft. Drafts track the selected project's hours
 // but are not public and earn no points until submitted.
 app.post("/api/jams/:week/draft", needLogin, async (req, res) => {
@@ -1509,6 +1554,9 @@ app.get("/api/me", async (req, res) => {
 
   res.json({
     name: displayName(u),
+    avatarUrl: u.avatarFile
+      ? `/uploads/${encodeURIComponent(u.avatarFile)}`
+      : null,
     hackatimeLinked: !!u.hackatimeId,
     hours: streak ? streak.totalHours : 0,
     goalHours: GOAL,
