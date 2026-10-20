@@ -33,6 +33,7 @@ const {
   OWNER_GITHUB_IDS = "",
   UPLOAD_DIR = path.join(__dirname, "uploads"),
 } = process.env;
+const DEMO_ON = /^true$/i.test(String(DEMO_MODE).trim());
 
 const MINH = Number(MIN_HOURS);
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -526,7 +527,9 @@ const SKIP = ["Other", "<<LAST_PROJECT>>"];
 const liveCache = new Map();
 
 async function totalHours(u, w) {
-  if (!u.hackatimeId) return 0;
+  const demo = DEMO_ON ? Number(u.demoHours?.[w]) || 0 : 0;
+
+  if (!u.hackatimeId) return demo;
 
   const tracked = [
     ...new Set(
@@ -542,7 +545,7 @@ async function totalHours(u, w) {
     ),
   ];
 
-  if (!tracked.length) return 0;
+  if (!tracked.length) return demo;
 
   const { projects } = await htStats(
     u.hackatimeId,
@@ -553,7 +556,7 @@ async function totalHours(u, w) {
     tracked.reduce(
       (sum, name) => sum + (Number(projects[name]) || 0),
       0
-    ) / 3600
+    ) / 3600 + demo
   );
 }
 
@@ -597,7 +600,7 @@ function ensureStreak(u) {
 
   if (u.freezes == null) u.freezes = 0;
 
-  if (!u.streak.started && u.hackatimeId) {
+  if (!u.streak.started && (u.hackatimeId || DEMO_ON)) {
     u.streak.started = true;
     u.streak.settled = Math.max(0, currentWeek() - 1);
   }
@@ -645,7 +648,7 @@ const settling = new Map();
 function settle(u) {
   const st = ensureStreak(u);
 
-  if (!st.started || !u.hackatimeId) {
+  if (!st.started || (!u.hackatimeId && !DEMO_ON)) {
     return Promise.resolve();
   }
 
@@ -668,7 +671,7 @@ function settle(u) {
 async function streakInfo(u, fresh = false) {
   const st = ensureStreak(u);
 
-  if (!st.started || !u.hackatimeId) return null;
+  if (!st.started || (!u.hackatimeId && !DEMO_ON)) return null;
 
   let ok = true;
   let weekHours = 0;
@@ -1231,7 +1234,7 @@ app.post("/api/sync", needLogin, async (req, res) => {
 
 // Demo only: fake extra hours.
 app.post("/api/demo/log-hours", needLogin, async (req, res) => {
-  if (DEMO_MODE !== "true") {
+  if (!DEMO_ON) {
     return res.status(403).json({ error: "demo mode off" });
   }
 
@@ -1241,13 +1244,25 @@ app.post("/api/demo/log-hours", needLogin, async (req, res) => {
     return res.status(400).json({ error: "hours 0-24" });
   }
 
-  me(req).demoPoints =
-    (me(req).demoPoints || 0) + pointsFor(h * 3600);
+  const w = currentWeek();
+
+  if (w < 1 || w > JAMS.length) {
+    return res.status(400).json({ error: "no jam is open right now" });
+  }
+
+  const u = me(req);
+
+  ensureStreak(u);
+  u.demoHours = u.demoHours || {};
+  u.demoHours[w] = +((u.demoHours[w] || 0) + h).toFixed(2);
+  u.demoPoints = (u.demoPoints || 0) + pointsFor(h * 3600);
+  liveCache.delete(u.id); // otherwise /api/me shows the old hours for up to 60s
 
   await save();
 
-  res.json({ points: balance(me(req)) });
+  res.json({ points: balance(u), weekHours: u.demoHours[w] });
 });
+
 
 // ---------- store ----------
 app.get("/api/store", (req, res) => res.json(STORE));
@@ -1268,7 +1283,7 @@ app.post("/api/store/redeem", needLogin, async (req, res) => {
       return res.status(400).json({ error: "quantity 1-50" });
     }
 
-    if (!u.hackatimeId) {
+    if (!u.hackatimeId && !DEMO_ON) {
       return res.status(400).json({ error: "link Hackatime first" });
     }
 
@@ -1579,7 +1594,7 @@ app.get("/api/me", async (req, res) => {
       })),
 
     orders: db.orders.filter((o) => o.userId === u.id),
-    demoMode: DEMO_MODE === "true",
+    demoMode: DEMO_ON,
   });
 });
 

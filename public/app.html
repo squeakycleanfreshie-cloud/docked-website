@@ -630,13 +630,13 @@ function renderAccount() {
     (s) => s.status === "draft"
   ).length;
 
-  const goal = Number(ME.goalHours) || 500;
+  const goal = Number(ME.goalHours) || 100;
   const hours = Number(ME.hours) || 0;
   const percent = Math.min(100, Math.round(hours / goal * 100));
 
   $("profileLabel").textContent = name;
   $("profileAvatar").innerHTML = avatar
-    ? `<img src="${safeUrl(avatar)}" alt="Profile picture">`
+    ? `<img src="${/^\/uploads\//.test(avatar) ? esc(avatar) : safeUrl(avatar)}" alt="Profile picture">`
     : esc(name.trim().charAt(0).toUpperCase() || "?");
 
   // Large progress bars are the main focus of the dashboard.
