@@ -514,8 +514,9 @@ async function api(path, method = "GET", body) {
   const j = await r.json().catch(() => ({}));
 
   if (!r.ok) {
-    alert(j.error || r.status);
-    throw new Error(j.error || r.status);
+    const msg = j.error || `Server error (${r.status}). Try again in a minute.`;
+    alert(msg);
+    throw new Error(msg);
   }
 
   return j;

@@ -228,7 +228,28 @@ const balance = (u) =>
   earned(u) + (u.demoPoints || 0) - (u.spentPoints || 0);
 
 // ---------- app ----------
+// A failed DB write used to throw inside async routes, crash the process and make Render answer 502.
+// Log it and keep the server up instead.
+process.on("unhandledRejection", (err) => console.error("unhandledRejection:", err));
+process.on("uncaughtException", (err) => console.error("uncaughtException:", err));
+
 const app = express();
+
+// Any error thrown in an async route becomes a JSON 500 instead of a crash.
+for (const m of ["get", "post", "put", "delete"]) {
+  const orig = app[m].bind(app);
+  app[m] = (path, ...handlers) =>
+    handlers.length
+      ? orig(path, ...handlers.map((h) =>
+          typeof h === "function" && h.length < 4
+            ? (req, res, next) =>
+                Promise.resolve(h(req, res, next)).catch((err) => {
+                  console.error(`${req.method} ${req.path} failed:`, err);
+                  if (!res.headersSent) res.status(500).json({ error: "Server error, please try again." });
+                })
+            : h))
+      : orig(path);
+}
 
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "4mb" }));
